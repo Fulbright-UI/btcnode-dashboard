@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+tests/ausgabe/
+tests/probe.conf
+tests/updates-probe.json
+tests/tor-probe.json
