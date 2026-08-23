@@ -1,60 +1,63 @@
 # btcnode-dashboard
 
-Eine Statusseite für den eigenen Bitcoin-Fullnode. Läuft auf einem Raspberry Pi
-neben Bitcoin Core und zeigt im Browser, was der Node gerade tut.
+*[Deutsche Fassung](README.de.md)*
 
-**Der Punkt dabei: Die Seite kann nichts.** Ein Python-Programm fragt den Node
-ab und schreibt fertige Dateien in einen Ordner. Der Webserver liefert nur diese
-Dateien aus — er kennt den Node nicht, nimmt keine Eingaben entgegen und führt
-nichts aus. Wer den Webserver übernimmt, bekommt Dateien.
+A status page for your own Bitcoin full node. Runs on a Raspberry Pi next to
+Bitcoin Core and shows in a browser what the node is doing.
 
-Kein Framework, keine Fremdpakete, kein Docker. Ein Python-Programm aus der
-Standardbibliothek und ein Installationsskript.
+**The point of it: the page cannot do anything.** A Python program queries the
+node and writes finished files into a folder. The web server only hands out
+those files — it does not know the node, accepts no input and executes
+nothing. Whoever takes over the web server gets files.
 
-**Es installiert weder Bitcoin Core noch einen Electrum-Server.** Das ist
-Absicht: Ein Skript, das 750 GB belegt und stundenlang aus der Quelle baut, ist
-etwas anderes als eine Statusseite — und es soll niemand ungelesen ausführen.
-Läuft bei dir schon ein Node, ist das Dashboard in zwei Minuten eingerichtet.
+No framework, no third-party packages, no Docker. One Python program from the
+standard library and one installation script.
 
----
+**It installs neither Bitcoin Core nor an Electrum server.** That is
+deliberate: a script that occupies 750 GB and builds from source for hours is
+a different animal from a status page — and nobody should run it unread. If a
+node already runs on your machine, the dashboard is set up in two minutes.
 
-## Was es zeigt
-
-- **Fortschritt der Synchronisation** mit Tempo und geschätzter Restzeit
-- **Verbundene Knoten** als Fächer: der eigene Node in der Mitte, die
-  Gegenstellen links und rechts, mit Adresse, Netzart, Latenz und bewegter
-  Datenmenge an der Linie. Beim Überfahren kommen Kennung, Dienste und
-  Verbindungsdauer dazu
-- **Systemzustand** des Rechners: Temperatur mit Stundenverlauf, Auslastung,
-  Arbeitsspeicher, Plattenplatz — bei einem Raspberry Pi auch die
-  Stromversorgung, weil Unterspannung die häufigste Ursache beschädigter
-  Blockchain-Daten ist
-- **Mempool und Gebühren**, Blockbelohnung, nächste Halbierung, Schwierigkeit
-- **Volumen und Gebührenverlauf** der letzten 24 Stunden
-- **Electrum-Server**, falls einer läuft, mit den Adressen für die Wallet und
-  einem Kopierknopf daneben
-- **Protokoll** des Nodes, mitlaufend
-
-Ohne Daten stehen die Karten trotzdem da — mit einem gedämpften Gerüst und
-Strichen statt Zahlen. **Nie erfundene Werte:** Auf einer Anzeige, die den
-Zustand eines Nodes meldet, weiß auf dem nächsten Bildschirmfoto sonst niemand
-mehr, was gemessen und was gemalt war.
+The page speaks **English or German**. The installer asks once; you can change
+it later in one line of the configuration file.
 
 ---
 
-## Voraussetzungen
+## What it shows
 
-- Ein **laufender Bitcoin Core**, Version 26 oder neuer. Wie er aufgesetzt
-  wurde, spielt keine Rolle
-- **Python 3.9** oder neuer (auf Raspberry Pi OS und Debian ohnehin dabei)
-- **nginx**, oder ein beliebiger anderer Webserver für statische Dateien
-- Schreibzugriff auf die `bitcoin.conf`
+- **Sync progress** with rate and estimated time remaining
+- **Connected nodes** as a fan: your own node in the middle, the peers to the
+  left and right, with address, network type, latency and data volume on the
+  line. Pointing at a row adds identifier, services and connection time
+- **System state** of the machine: temperature with an hourly curve, load,
+  memory, disk space — on a Raspberry Pi also the power supply, because
+  undervoltage is the most common cause of corrupted blockchain data
+- **Mempool and fees**, block reward, next halving, difficulty
+- **Volume and fee history** of the last 24 hours
+- **Electrum server**, if one runs, with the addresses for your wallet and a
+  copy button next to them
+- **Log** of the node, live
 
-Getestet auf Raspberry Pi OS Lite 64-bit (Debian 13) mit Bitcoin Core 31.1.
+Without data the cards are still there — with a muted skeleton and dashes
+instead of numbers. **Never invented values:** on a display that reports the
+state of a node, nobody could tell on the next screenshot what was measured
+and what was drawn.
 
 ---
 
-## Einrichten
+## Requirements
+
+- A **running Bitcoin Core**, version 26 or newer. How it was set up does not
+  matter
+- **Python 3.9** or newer (present on Raspberry Pi OS and Debian anyway)
+- **nginx**, or any other web server for static files
+- Write access to `bitcoin.conf`
+
+Tested on Raspberry Pi OS Lite 64-bit (Debian 13) with Bitcoin Core 31.1.
+
+---
+
+## Setting it up
 
 ```bash
 git clone https://github.com/Fulbright-UI/btcnode-dashboard.git
@@ -62,191 +65,208 @@ cd btcnode-dashboard
 sudo bash install.sh
 ```
 
-Das Skript läuft **ohne Rückfragen** durch: Es findet das Datenverzeichnis
-selbst, legt einen **nur lesenden** RPC-Zugang an, richtet den Generator als
-Dienst ein und begrenzt die Firewall auf das Heimnetz.
+The script asks **one question** — the language of the page — and then runs
+through without further prompts: it finds the data directory itself, creates a
+**read-only** RPC account, sets the generator up as a service and limits the
+firewall to your local network.
 
-Einen Schritt macht es bewusst nicht von selbst — **bitcoind neu starten**.
-Ohne Neustart kennt der Node den neuen Zugang nicht, und bis dahin zeigt das
-Dashboard „Node nicht erreichbar". Der Neustart kostet während einer laufenden
-Erstsynchronisation den warmen Zwischenspeicher, und das ist eine Entscheidung
-des Betreibers:
+Piped into a shell, where nobody could answer, it assumes English. To skip the
+question entirely:
+
+```bash
+sudo bash install.sh --language de
+```
+
+One step it deliberately does not take by itself — **restarting bitcoind**.
+Without a restart the node does not know about the new account, and until then
+the dashboard shows "node not reachable". A restart during an initial sync
+costs the warm cache, and that is the operator's decision:
 
 ```bash
 sudo systemctl restart bitcoind
 ```
 
-Wer das gleich miterledigt haben will, ruft `install.sh --neustart` auf.
+Add `--restart` if you want that done for you.
 
-Wenn die Erkennung scheitert:
+When detection fails:
 
 ```bash
-sudo bash install.sh --datadir /mnt/bitcoin/bitcoin --subnetz 192.168.1.0/24
+sudo bash install.sh --datadir /mnt/bitcoin/bitcoin --subnet 192.168.1.0/24
 ```
 
-| Option | Bedeutung |
+| Option | Meaning |
 |---|---|
-| `--datadir PFAD` | Datenverzeichnis von Bitcoin Core |
-| `--port N` | Port der Statusseite, Vorgabe 80 |
-| `--subnetz CIDR` | Heimnetz für die Firewall, z. B. `192.168.1.0/24` |
-| `--neustart` | bitcoind am Ende neu starten |
-| `--deinstallieren` | Dienst, Programm, Seite und Nutzer wieder entfernen |
+| `--language de\|en` | language of the page; skips the question |
+| `--datadir PATH` | data directory of Bitcoin Core |
+| `--port N` | port of the status page, default 80 |
+| `--subnet CIDR` | local network for the firewall, e.g. `192.168.1.0/24` |
+| `--restart` | restart bitcoind at the end |
+| `--uninstall` | remove service, program, page and user again |
 
-Alles ist wiederholbar: Zweimal ausführen macht nichts kaputt, und ein
-bestehendes RPC-Passwort bleibt unverändert.
+Everything is repeatable: running it twice breaks nothing, and an existing RPC
+password stays unchanged.
 
-### Bei fertigen Bausätzen
+### With prebuilt kits
 
-Umbrel, Start9 und MyNode verwalten die `bitcoin.conf` selbst und überschreiben
-sie beim Neustart. Dort gehören diese Zeilen an die vom Bausatz vorgesehene
-Stelle für eigene Ergänzungen:
+Umbrel, Start9 and MyNode manage `bitcoin.conf` themselves and overwrite it on
+restart. There these lines belong at the place the kit provides for your own
+additions:
 
 ```
-rpcauth=dashboard:<salz>$<pruefsumme>
+rpcauth=dashboard:<salt>$<digest>
 rpcwhitelist=dashboard:getblockchaininfo,getnetworkinfo,getmempoolinfo,getconnectioncount,uptime,estimatesmartfee,getblockstats,getblockhash,getblockheader,getpeerinfo
 rpcwhitelistdefault=0
 ```
 
-Die `rpcauth`-Zeile erzeugst du so — das Passwort danach in
-`/etc/node-dashboard.conf` eintragen:
+Generate the `rpcauth` line like this — then put the password into
+`/etc/node-dashboard.conf`:
 
 ```bash
 python3 - <<'PY'
 import hashlib, hmac, os, secrets
-passwort = secrets.token_urlsafe(32)
-salz = os.urandom(16).hex()
-pruef = hmac.new(salz.encode(), passwort.encode(), hashlib.sha256).hexdigest()
-print(f"rpcauth=dashboard:{salz}${pruef}")
-print(f"Passwort: {passwort}")
+password = secrets.token_urlsafe(32)
+salt = os.urandom(16).hex()
+digest = hmac.new(salt.encode(), password.encode(), hashlib.sha256).hexdigest()
+print(f"rpcauth=dashboard:{salt}${digest}")
+print(f"Password: {password}")
 PY
 ```
 
 ---
 
-## Wie sicher ist das
+## How safe is this
 
-Das ist die eigentliche Entwurfsfrage, deshalb ausführlich.
+This is the actual design question, so it gets room.
 
-**Der Node ist vom Dashboard getrennt.** Es gibt keinen Weg von der Webseite
-zurück zum Node. Der Generator schreibt Dateien, der Webserver liest sie. Mehr
-passiert nicht.
+**The node is separated from the dashboard.** There is no route from the web
+page back to the node. The generator writes files, the web server reads them.
+Nothing else happens.
 
-**Der RPC-Zugang darf nur lesen.** In der `bitcoin.conf` steht
-`rpcwhitelistdefault=0` und eine ausdrückliche Liste von zehn Methoden. Selbst
-wenn das Passwort abhanden käme, ließe sich damit nichts anstellen: keine
-Wallet, kein Senden, keine Konfiguration, kein Herunterfahren. Andere
-RPC-Nutzer sind davon nicht betroffen.
+**The RPC account may only read.** `bitcoin.conf` carries
+`rpcwhitelistdefault=0` and an explicit list of ten methods. Even if the
+password leaked, nothing could be done with it: no wallet, no sending, no
+configuration, no shutdown. Other RPC users are unaffected.
 
-**Der Dienst läuft als eigener Systemnutzer** ohne Anmelderechte, abgeschottet
-über systemd (`ProtectSystem=strict`), mit genau einem beschreibbaren Pfad.
+**The service runs as its own system user** without login rights, confined by
+systemd (`ProtectSystem=strict`), with exactly one writable path.
 
-**Fremder Text wird nie zu Markup.** Protokollzeilen, Peer-Adressen und
-Kennungen anderer Knoten bestimmt nicht dieses Programm, sondern die
-Gegenstelle. Sie werden serverseitig maskiert und im Browser ausschließlich
-über `textContent` gesetzt, wo per Bauart kein Markup entstehen kann.
+**Foreign text never becomes markup.** Log lines, peer addresses and
+identifiers of other nodes are chosen by the peer, not by this program. They
+are escaped server-side and set in the browser exclusively via `textContent`,
+where markup cannot arise by construction.
 
-**Die Content-Security-Policy kommt ohne `unsafe-inline` aus.** Genau deshalb
-liegen Stil und Skript in eigenen Dateien und nicht im HTML.
+**The Content Security Policy works without `unsafe-inline`.** That is exactly
+why style and script live in their own files and not in the HTML.
 
-**Der Generator geht nie ins Internet.** Er spricht ausschließlich mit
-`127.0.0.1`.
+**The generator never goes online.** It talks to `127.0.0.1` and nothing else.
 
-**Kein Knopf erreicht den Node.** Ein Neustart-Knopf bräuchte einen Endpunkt,
-der Eingaben annimmt, und einen Rechteweg bis zu systemd. Das macht aus
-„schlimmstenfalls liest jemand eine Datei" ein „schlimmstenfalls stoppt jemand
-den Node". Die einzigen Schaltflächen auf der Seite kopieren eine Adresse in
-die Zwischenablage des Browsers — sonst nichts.
+**No button reaches the node.** A restart button would need an endpoint that
+accepts input and a path of privilege up to systemd. That turns "at worst
+somebody reads a file" into "at worst somebody stops the node". The only
+buttons on the page copy an address to the browser clipboard — nothing more.
 
-**Die Firewall begrenzt den Zugriff auf das Heimnetz**, sofern `ufw` vorhanden
-ist. Die Seite hat keine Anmeldung — stell sie nicht ins Internet.
+**The firewall limits access to the local network**, if `ufw` is present. The
+page has no login — do not put it on the internet.
 
 ---
 
 ## JavaScript
 
-Die Seite trägt sich selbst nach, ohne neu zu laden. Das ändert am Prinzip
-nichts: **Die Schnittstelle ist eine statische Datei.** Der Generator schreibt
-`status.json` genauso wie das HTML, das Skript im Browser holt sie und trägt
-die Werte nach. Es gibt keinen Endpunkt, der etwas entgegennimmt.
+The page updates itself without reloading. That changes nothing about the
+principle: **the interface is a static file.** The generator writes
+`status.json` just as it writes the HTML; the script in the browser fetches it
+and fills the values in. There is no endpoint that accepts anything.
 
-Ohne JavaScript funktioniert alles weiter — die Seite holt sich dann über ein
-`<meta http-equiv=refresh>` neu.
+Everything keeps working without JavaScript — the page then reloads itself via
+a `<meta http-equiv=refresh>`.
 
-Erzeugt werden:
+Generated files:
 
-| Datei | Takt | Inhalt |
+| File | Interval | Content |
 |---|---|---|
-| `index.html` | 30 s | vollständige Seite |
-| `status.json` | 30 s | dieselben Bausteine plus Peers als reine Struktur |
-| `protokoll.txt` | 5 s | Journalzeilen, reiner Text, ohne jedes Markup |
-| `stil.css`, `dash.js` | einmalig | ändern sich nur beim Programmtausch |
+| `index.html` | 30 s | the complete page |
+| `status.json` | 30 s | the same building blocks plus peers as pure structure |
+| `log.txt` | 5 s | journal lines, plain text, without any markup |
+| `stil.css`, `dash.js` | once | change only when the program is replaced |
+
+`dash.js` carries the labels of the configured language and is therefore
+written per installation. Its fingerprint is built over the finished text, so
+a language change shows up as a new file rather than an old one from the
+browser cache.
 
 ---
 
-## Einstellungen
+## Settings
 
-In `/etc/node-dashboard.conf`, danach `sudo systemctl restart node-dashboard`:
+In `/etc/node-dashboard.conf`, then `sudo systemctl restart node-dashboard`:
 
-| Schlüssel | Vorgabe | Bedeutung |
+| Key | Default | Meaning |
 |---|---|---|
-| `INTERVALL` | 30 | Takt der Node-Abfrage in Sekunden |
-| `LOG_INTERVALL` | 5 | Takt der Protokollanzeige |
-| `LOG_DIENSTE` | `bitcoind` | Quellen, mit Komma getrennt. Leer schaltet ab |
-| `LOG_ZEILEN` | 150 | Rücklauf im Protokoll. Es füllt die Spalte und rollt innen |
-| `RPC_TIMEOUT` | 45 | Zeitlimit je Abfrage in Sekunden |
-| `TOLERANZ` | 3 | erfolglose Abfragen, bevor Alarm geschlagen wird |
-| `PEERS_MAX` | 64 | Höchstzahl der Punkte in der Netzkarte |
-| `ELECTRS_PORT` | 50001 | Port des Electrum-Servers, falls einer läuft |
+| `LANGUAGE` | `en` | page language: `de` or `en` |
+| `INTERVAL` | 30 | interval of the node query, in seconds |
+| `LOG_INTERVAL` | 5 | interval of the log panel |
+| `LOG_SERVICES` | `bitcoind` | sources, comma separated. Empty switches it off |
+| `LOG_LINES` | 150 | scrollback in the log. It fills the column and scrolls inside |
+| `RPC_TIMEOUT` | 45 | timeout per call, in seconds |
+| `TOLERANCE` | 3 | unsuccessful calls before the alarm is raised |
+| `PEERS_MAX` | 64 | maximum number of dots in the network map |
+| `ELECTRS_PORT` | 50001 | port of the Electrum server, if one runs |
 
-### Warum es ein Toleranzfenster gibt
+The language affects more than words: German writes `1.234.567,8`, English
+`1,234,567.8` — period and comma swap roles, both of them. Every number on the
+page goes through one formatter for that reason, and the test run checks both
+notations.
 
-Während der Erstsynchronisation hält Bitcoin Core seine Abfrageschnittstelle
-an, solange es den Zwischenspeicher auf die Platte schreibt. Auf langsamer
-Hardware dauert das regelmäßig länger als das Zeitlimit einer Abfrage.
+### Why there is a tolerance window
 
-Ein Dashboard, das daraufhin „Node nicht erreichbar" meldet und alle Zahlen auf
-null setzt, ist schlimmer als keins — es meldet einen Ausfall, den es nicht
-gibt. Deshalb hält dieses hier den letzten gemessenen Stand und sagt leise, wie
-alt er ist. Die rote Karte kommt erst, wenn `TOLERANZ` Abfragen hintereinander
-erfolglos waren.
+During the initial sync Bitcoin Core stalls its query interface while it
+writes its cache to disk. On slow hardware that regularly takes longer than
+the timeout of a single call.
+
+A dashboard that reports "node not reachable" and zeroes every figure in
+response is worse than none — it reports an outage that is not happening. So
+this one holds the last measured state and quietly says how old it is. The red
+card appears only after `TOLERANCE` calls in a row have failed.
 
 ---
 
-## Entwickeln
+## Developing
 
-Es gibt einen vollständigen Probelauf, der ohne Node und ohne Raspberry Pi
-auskommt:
+There is a complete test run that needs neither a node nor a Raspberry Pi:
 
 ```bash
-python3 tests/probelauf.py                # Kette steht, alle Karten
-python3 tests/probelauf.py --lage sync    # Erstsynchronisation
-python3 tests/probelauf.py --lage leer    # Node antwortet, liefert nichts
+python3 tests/probelauf.py                  # chain up to date, all cards
+python3 tests/probelauf.py --case sync      # initial sync
+python3 tests/probelauf.py --case leer      # node answers, delivers nothing
+python3 tests/probelauf.py --language en    # the English page
 ```
 
-`tests/attrappe.py` ist ein echter HTTP-Server mit Basic Auth und JSON-RPC —
-kein Ersatz für die Abfrageschicht, damit im Test derselbe Code läuft wie
-später, Fehlerbehandlung eingeschlossen. Unbekannte Methoden beantwortet sie
-mit HTTP 403, so wie eine fehlende Whitelist-Eintragung es täte.
+`tests/attrappe.py` is a real HTTP server with basic auth and JSON-RPC — not a
+replacement for the query layer, so that the test runs the same code that will
+run later, error handling included. It answers unknown methods with HTTP 403,
+exactly as a missing whitelist entry would.
 
-Die erzeugte Seite liegt danach in `tests/ausgabe/index.html` und lässt sich im
-Browser öffnen.
+The generated page then sits in `tests/ausgabe/index.html` and can be opened
+in a browser.
 
-Rund hundert Prüfungen laufen dabei durch: Wohlgeformtheit des HTML, keine
-Schaltflächen, keine Inline-Stile, deutsche Kommaschreibweise, Maskierung
-fremder Werte, das Toleranzfenster in beide Richtungen, die Geometrie der
-Netzkarte.
-
----
-
-## Sprache
-
-Code, Kommentare und Oberfläche sind auf Deutsch. Das ist eine bewusste
-Entscheidung und keine Absicht, jemanden auszuschließen: Die Kommentare halten
-fest, **warum** etwas so gebaut ist, und eine Übersetzung wäre eine Gelegenheit,
-genau das zu verfälschen.
+About 130 checks run in the process, in both languages: well-formedness of the
+HTML, no buttons that reach the node, no inline styles, the correct decimal
+separator, escaping of foreign values, the tolerance window in both
+directions, the geometry of the network map — and two checks that came out of
+real breakage: every visible string must have a translation, and every CSS
+class used in the markup must exist in the style sheet.
 
 ---
 
-## Lizenz
+## Language of the source
 
-MIT — siehe [LICENSE](LICENSE).
+Code, comments and identifiers are English; the user interface speaks both.
+The comments record **why** something is built the way it is, usually with the
+date and the measurement that made the case. They are the most valuable part
+of this repository — please keep them that way when you change something.
+
+---
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).

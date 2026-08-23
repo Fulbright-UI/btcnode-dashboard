@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
-"""Probelauf des Dashboards ohne Raspberry Pi.
+"""Test run of the dashboard without a Raspberry Pi.
 
-Startet die Attrappe, laesst node-dashboard.py eine echte Seite erzeugen und
-prueft sie. Das Ergebnis landet in tests/ausgabe/ und laesst sich im Browser
-oeffnen — so ist eine Gestaltungsaenderung sichtbar, bevor sie auf den Pi geht.
+Starts the mock, lets node-dashboard.py produce a real page and checks it. The
+result lands in tests/ausgabe/ and can be opened in a browser — that way a
+design change is visible before it goes to the Pi.
 
-Geprueft wird:
-  * HTML ist wohlgeformt, Skript nur als eigene Datei, keine Inline-Handler
-  * jede erwartete Karte ist da und steht in der richtigen Zone
-  * die Netzkarte enthaelt einen Punkt je Gegenstelle
-  * fremder Text (Kennung eines anderen Knotens) landet nirgends als Markup
-  * status.json ist gueltig und deckt sich mit der Seite
-  * das Toleranzfenster haelt den letzten Stand, statt sofort Alarm zu geben
-  * Kopierfelder brechen nicht um
-  * Zahlen benutzen durchgaengig das deutsche Komma
-  * die 24-Stunden-Daten werden nur einmal geholt, nicht bei jedem Durchlauf
+Checked here:
+  * the HTML is well formed, the script only as its own file, no inline
+    handlers
+  * every expected card is present and sits in the right zone
+  * the network map holds one dot per peer
+  * foreign text (the identifier of another node) never lands as markup
+  * status.json is valid and agrees with the page
+  * the tolerance window keeps the last state instead of raising the alarm
+  * copy fields do not overflow
+  * numbers use the decimal separator of the configured language throughout
+  * the 24 hour data is fetched once, not on every cycle
 
-Aufruf:
-    python3 tests/probelauf.py                # Lage 'synchron'
-    python3 tests/probelauf.py --lage sync    # Erstsynchronisation
-    python3 tests/probelauf.py --lage leer
+Usage:
+    python3 tests/probelauf.py                        # case 'synchron'
+    python3 tests/probelauf.py --case sync            # initial sync
+    python3 tests/probelauf.py --case leer
+    python3 tests/probelauf.py --language en          # the English page
 """
 
 import argparse
@@ -37,834 +39,959 @@ import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 
-HIER = Path(__file__).resolve().parent
-PROJEKT = HIER.parent
-AUSGABE = HIER / "ausgabe"
+HERE = Path(__file__).resolve().parent
+PROJECT = HERE.parent
+OUTPUT = HERE / "ausgabe"
 PORT = 18332
 
-# Die Attrappe schickt diese Kennung als 'subver' eines fremden Knotens mit.
-# Wenn sie irgendwo unmaskiert in der Seite auftaucht, kann ein fremder Node
-# Markup in das Dashboard schreiben.
-GIFT = "<b>Knoten</b>"
+# The mock sends this identifier as the 'subver' of a foreign node. If it
+# turns up unescaped anywhere on the page, a foreign node can write markup
+# into the dashboard.
+POISON = "<b>Knoten</b>"
 
-fehler_gesamt = []
-
-
-def melde(bestanden, text, zusatz=""):
-    zeichen = "ok  " if bestanden else "FEHL"
-    print(f"  [{zeichen}] {text}{('  — ' + zusatz) if zusatz else ''}")
-    if not bestanden:
-        fehler_gesamt.append(text)
+failures = []
 
 
-def lade_dashboard():
+def check(passed, text, detail=""):
+    mark = "ok  " if passed else "FEHL"
+    print(f"  [{mark}] {text}{('  — ' + detail) if detail else ''}")
+    if not passed:
+        failures.append(text)
+
+
+def load_dashboard():
     spec = importlib.util.spec_from_file_location(
-        "node_dashboard", PROJEKT / "node-dashboard.py")
-    modul = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(modul)
-    return modul
+        "node_dashboard", PROJECT / "node-dashboard.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def ersetze_systemteile(nd, lage):
-    """Alles, was es nur auf dem Pi gibt, durch feste Werte ersetzen.
+def replace_system_parts(nd, case):
+    """Replace everything that exists only on the Pi with fixed values.
 
-    Bewusst eng gehalten: Nur Dateien unter /sys, /proc und systemd-Aufrufe.
-    Die RPC-Schicht bleibt unangetastet und spricht wirklich ueber HTTP.
+    Deliberately kept narrow: only files under /sys, /proc and systemd calls.
+    The RPC layer stays untouched and really talks over HTTP.
     """
-    echt_lesen = nd.lies_datei
-    # Erfundene Adresse in der richtigen Laenge (56 Zeichen plus .onion).
-    # Hier stand einmal die echte Adresse dieses Nodes — in einer Datei, die
-    # in ein Repository gehoert. Eine Onion-Adresse ist kein Geheimnis im
-    # kryptografischen Sinn, aber sie ist die Anschrift eines Dienstes, der
-    # niemandem sonst offenstehen soll.
+    real_read = nd.read_file
+    # An invented address of the right length (56 characters plus .onion).
+    # The real address of this node once stood here — in a file destined for
+    # a repository. An onion address is no secret in the cryptographic sense,
+    # but it is the doorway to a service that should be open to nobody else.
     onion = ("beispielbeispielbeispielbeispiel"
              "beispielbeispielbeispiel.onion")
 
-    def lesen(pfad, standard=None):
-        pfad = str(pfad)
-        if "thermal" in pfad:
+    def fake_read(path, default=None):
+        path = str(path)
+        if "thermal" in path:
             return "69634"
-        if "onion" in pfad or "hostname" in pfad:
+        if "onion" in path or "hostname" in path:
             return onion
-        return echt_lesen(pfad, standard)
+        return real_read(path, default)
 
-    nd.lies_datei = lesen
-    nd.dienst_laeuft = lambda name: True
-    nd.port_offen = lambda host, port: True
-    nd.eigene_ip = lambda: "192.168.1.50"
+    nd.read_file = fake_read
+    nd.service_running = lambda name: True
+    nd.port_open = lambda host, port: True
+    nd.own_ip = lambda: "192.168.1.50"
 
-    echt_exists = os.path.exists
-    nd.os.path.exists = lambda p: True if ".service" in str(p) else echt_exists(p)
+    real_exists = os.path.exists
+    nd.os.path.exists = lambda p: True if ".service" in str(p) else real_exists(p)
 
-    # Ein echtes Protokoll, nicht eine Zeile. Vorher lieferte die Attrappe
-    # fuer jeden Aufruf "throttled=0x0" — auch fuer journalctl. Dadurch war
-    # das Protokoll im Test 18 Pixel hoch und auf dem Pi 2673, und ein
-    # Layoutfehler, der nur bei vollem Protokoll auftritt, blieb unsichtbar.
-    muster = ("2026-08-23T14:04:16+02:00 btcnode bitcoind[62345]: "
+    # A real log, not a single line. The mock used to answer "throttled=0x0"
+    # to every call — including journalctl. That made the log 18 pixels tall
+    # in the test and 2673 on the Pi, and a layout fault that only shows with
+    # a full log stayed invisible.
+    pattern = ("2026-08-23T14:04:16+02:00 btcnode bitcoind[62345]: "
               "2026-08-23T12:04:16Z UpdateTip: new best="
               "00000000000000000118e7c0614044d2846a57fc347fb2ae684415e8fdefb293 "
               "height={h} version=0x20000000 log2_work=85.493329 tx=167769911 "
               "date='2016-11-03T12:23:13Z' progress=0.112807 "
               "cache=204.1MiB(1483920txo)")
-    protokoll = "\n".join(muster.format(h=437184 - i) for i in range(150))
+    log = "\n".join(pattern.format(h=437184 - i) for i in range(150))
 
-    def lauf(befehl, *a, **k):
-        class Ergebnis:
+    def run(command, *a, **k):
+        class Result:
             returncode = 0
             stderr = ""
-            stdout = (protokoll if "journalctl" in " ".join(map(str, befehl))
+            stdout = (log if "journalctl" in " ".join(map(str, command))
                       else "throttled=0x0")
-        return Ergebnis()
+        return Result()
 
-    nd.subprocess.run = lauf
+    nd.subprocess.run = run
 
-    # Eine Stunde Temperaturverlauf, damit die Kurve etwas zu zeichnen hat
-    jetzt = time.time()
+    # One hour of temperature history so the curve has something to draw
+    now = time.time()
     for i in range(90):
-        nd.TEMP_VERLAUF.append(
-            (jetzt - (90 - i) * nd.TEMP_TAKT, 56 + 13 * (i / 89) + 1.6 * math.sin(i / 3))
+        nd.TEMP_HISTORY.append(
+            (now - (90 - i) * nd.TEMP_STEP, 56 + 13 * (i / 89) + 1.6 * math.sin(i / 3))
         )
 
 
-def schreibe_konfiguration():
-    AUSGABE.mkdir(parents=True, exist_ok=True)
-    pfad = HIER / "probe.conf"
-    pfad.write_text(
+def write_config(language="de"):
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    path = HERE / "probe.conf"
+    path.write_text(
         f"RPC_HOST=127.0.0.1\nRPC_PORT={PORT}\nRPC_USER=dashboard\n"
-        f"RPC_PASSWORD=probe\nOUT_DIR={AUSGABE}\nDATA_DIR={PROJEKT}\n"
-        "ELECTRS_PORT=50001\nINTERVALL=30\nLOG_DIENSTE=bitcoind\n"
-        "LOG_ZEILEN=40\nLOG_INTERVALL=5\nTOLERANZ=3\nPEERS_MAX=64\n"
-        f"UPDATE_DATEI={HIER / 'updates-probe.json'}\n",
+        f"RPC_PASSWORD=probe\nOUT_DIR={OUTPUT}\nDATA_DIR={PROJECT}\n"
+        "ELECTRS_PORT=50001\nINTERVAL=30\nLOG_SERVICES=bitcoind\n"
+        "LOG_LINES=40\nLOG_INTERVAL=5\nTOLERANCE=3\nPEERS_MAX=64\n"
+        f"LANGUAGE={language}\n"
+        f"UPDATE_FILE={HERE / 'updates-probe.json'}\n",
         encoding="utf-8")
-    (HIER / "updates-probe.json").write_text(
+    (HERE / "updates-probe.json").write_text(
         '{"geprueft": %d, "eintraege": ['
         '{"name": "Bitcoin Core", "installiert": "31.1", "neueste": "31.1"},'
         '{"name": "electrs", "installiert": "0.11.1", "neueste": "0.11.1"}]}'
         % int(time.time() - 1260), encoding="utf-8")
-    return str(pfad)
+    return str(path)
 
 
-# ------------------------------------------------------------------ Pruefungen
-class Formpruefer(HTMLParser):
+# What has to appear on the finished page, per language. This table is filled
+# in by hand on purpose and does NOT read the DE table from the program:
+# otherwise the test would check the translation against itself and a swapped
+# entry would never show up.
+EXPECTED = {
+    "de": {
+        "raster": ["System", "Netzwerk-Eckdaten", "Mempool &amp; Gebühren"],
+        "netz": "Verbundene Knoten",
+        "voll": "Electrum-Server",
+        "protokoll": "Protokoll",
+        "laufzeit": "läuft seit",
+        "weit": ("Volumen · 24 Stunden", "Gebührenverlauf · 24 Stunden"),
+        "warten": "Erscheint, sobald die Kette steht",
+        "verbindungen": "Verbindungen",
+        "abgefragt": "werden abgefragt",
+        "aufgeloest": ("Blockchain", "Netzwerk", "Aktualisierungen"),
+        "decimal_sep": ",",
+    },
+    "en": {
+        "raster": ["System", "Network facts", "Mempool &amp; fees"],
+        "netz": "Connected nodes",
+        "voll": "Electrum server",
+        "protokoll": "Log",
+        "laufzeit": "up for",
+        "weit": ("Volume · 24 hours", "Fee history · 24 hours"),
+        "warten": "Appears once the chain is up to date",
+        "verbindungen": "Connections",
+        "abgefragt": "querying peers",
+        "aufgeloest": ("Blockchain", "Network", "Updates"),
+        "decimal_sep": ".",
+    },
+}
+
+
+# --------------------------------------------------------------------- Checks
+class FormChecker(HTMLParser):
     def __init__(self):
         super().__init__()
-        self.stapel, self.maengel = [], []
+        self.stack, self.faults = [], []
 
     def handle_startendtag(self, tag, attrs):
-        """<circle .../> und Verwandte schliessen sich selbst.
+        """<circle .../> and its relatives close themselves.
 
-        Ohne diese Ueberschreibung ruft HTMLParser nacheinander Anfang und
-        Ende auf, und das SVG der Netzkarte gilt faelschlich als kaputt.
+        Without this override HTMLParser calls start and end in turn, and the
+        SVG of the network map is wrongly reported as broken.
         """
         return
 
     def handle_starttag(self, tag, attrs):
         if tag not in ("meta", "br", "hr", "img", "link", "input"):
-            self.stapel.append(tag)
+            self.stack.append(tag)
 
     def handle_endtag(self, tag):
-        if self.stapel and self.stapel[-1] == tag:
-            self.stapel.pop()
+        if self.stack and self.stack[-1] == tag:
+            self.stack.pop()
         else:
-            self.maengel.append(f"</{tag}> ohne passenden Anfang")
+            self.faults.append(f"</{tag}> without a matching start")
 
 
-def zonen_aus(seite):
-    """Ordnet die Kartentitel den Zonen zu, in denen sie stehen."""
-    zonen = {}
-    stellen = [(m.start(), m.group(1))
+def zones_of(page):
+    """Map the card titles to the zones they sit in."""
+    zones = {}
+    spots = [(m.start(), m.group(1))
                for m in re.finditer(
                    r'id=z-(kopf|zustand|stoerung|band|netz|raster|weit|voll)',
-                   seite)]
-    stellen.append((len(seite), "ende"))
-    for i in range(len(stellen) - 1):
-        anfang, name = stellen[i]
-        stueck = seite[anfang:stellen[i + 1][0]]
-        zonen[name] = re.findall(r"<h2>(.*?)</h2>", stueck)
-    zonen["protokoll"] = re.findall(
-        r'class="karte protokoll">.*?<h2>(.*?)</h2>', seite, re.S)
-    return zonen
+                   page)]
+    spots.append((len(page), "ende"))
+    for i in range(len(spots) - 1):
+        start, name = spots[i]
+        chunk = page[start:spots[i + 1][0]]
+        zones[name] = re.findall(r"<h2>(.*?)</h2>", chunk)
+    zones["protokoll"] = re.findall(
+        r'class="karte protokoll">.*?<h2>(.*?)</h2>', page, re.S)
+    return zones
 
 
-def pruefe_seite(seite, lage, nd=None):
-    print("\n  Aufbau")
-    pruefer = Formpruefer()
-    pruefer.feed(seite)
-    melde(not pruefer.maengel and not pruefer.stapel, "HTML ist wohlgeformt",
-          ", ".join(pruefer.maengel + [f"<{t}> offen" for t in pruefer.stapel]))
+def check_translation(nd):
+    """Every visible string must have a German entry.
 
-    skripte = re.findall(r"<script([^>]*)>", seite)
-    melde(len(skripte) == 1 and re.fullmatch(r' src="dash\.js\?v=[0-9a-f]{8}"',
-                                             skripte[0]),
-          "Skript nur als eigene Datei eingebunden", str(skripte))
+    The reason is concrete: while moving the source to English, placeholders
+    were renamed ({dauer} -> {duration}) but the DE table was not. In such a
+    case t() falls back to the English text without a word — the page stays
+    intact and is suddenly English in one spot. No other test would find it.
+    """
+    print("\n  Translation completeness")
+    source = (PROJECT / "node-dashboard.py").read_text(encoding="utf-8")
+    a = source.index("DE = {")
+    b = source.index("\n}\n", a)
+    table, leftovers = source[a:b], source[:a] + source[b:]
 
-    # Fingerabdruck an der Adresse: Ohne ihn liefert der Browser nach einem
-    # Programmtausch bis zu zehn Minuten lang alte Regeln zu neuem Markup aus.
-    # Auf dem Pi wurden daraus am 23.08.2026 gruene Kloetze in den Karten.
-    melde(re.search(r'href="stil\.css\?v=[0-9a-f]{8}"', seite) is not None,
-          "Stil traegt einen Fingerabdruck gegen den Zwischenspeicher")
-    melde("onclick" not in seite and "onmouse" not in seite
-          and "javascript:" not in seite,
-          "keine Ereignisbehandlung im Markup")
-    melde("Content-Security-Policy" in seite and "'unsafe-inline'" not in seite,
-          "strenge Content-Security-Policy ohne unsafe-inline")
+    # Real t() calls only, not .get(" or dict(" — hence the boundary before
+    # the t.
+    calls = set(re.findall(r'(?<![\w.])t\(\s*("(?:[^"\\]|\\.)*")', leftovers))
+    missing = sorted(a[1:-1] for a in calls if a[1:-1] not in table)
+    check(not missing,
+          f"all {len(calls)} single-line t() strings are in DE",
+          " | ".join(f[:40] for f in missing[:4]))
 
-    # Die CSP verwirft style-Attribute im Markup, nicht nur <style>-Bloecke.
-    # Am 23.08.2026 stand der Fortschrittsbalken deshalb auf dem Pi immer auf
-    # voll: seine Breite war ein Inline-Stil. Geometrie gehoert in
-    # SVG-Attribute, Farbe in eine Klasse.
-    inline = re.findall(r'style="[^"]*"', seite)
-    melde(not inline,
-          "kein style-Attribut im Markup (die CSP wuerde es verwerfen)",
+    # And the other direction: placeholders must be named the same on both
+    # sides, otherwise str.format raises a KeyError in mid-operation.
+    askew = []
+    for tight, de in nd.DE.items():
+        if set(re.findall(r"\{(\w+)\}", tight)) != set(re.findall(r"\{(\w+)\}", de)):
+            askew.append(tight[:40])
+    check(not askew, f"placeholders agree in all {len(nd.DE)} entries",
+          " | ".join(askew[:4]))
+
+
+def check_classes(page, nd, case="synchron"):
+    """Every CSS class used in the markup must exist in the style sheet.
+
+    On 2026-08-23 a mechanical rename turned 'punkt' into 'point' — in the
+    markup, not in the style sheet. The page stayed well formed but the
+    colour dots were invisible. A test that only looks at the markup never
+    finds something like that.
+    """
+    print("\n  Classes and style")
+    known = set(re.findall(r"\.([a-zA-Z][\w-]*)", nd.STYLE))
+    # 'neutral' deliberately carries no rule of its own: .netzfarbe has a
+    # base colour and 'neutral' means exactly "take that one". Anyone adding
+    # to this list must be sure the class really is meant to have no effect —
+    # otherwise a broken rename stops being noticed.
+    known |= {"neutral"}
+    # Classes that only dash.js sets do not appear in the generated markup —
+    # the other way round there are none the style should not know.
+    used = set()
+    for m in re.finditer(r'class="([^"]*)"|class=([\w-]+)', page):
+        for w in (m.group(1) or m.group(2) or "").split():
+            if re.fullmatch(r"[a-zA-Z][\w-]*", w):
+                used.add(w)
+    unknown = sorted(used - known)
+    check(not unknown,
+          f"all {len(used)} used classes are defined in the style",
+          " | ".join(unknown[:6]))
+
+    # The same for the ids where dash.js updates the page.
+    idents = ["z-kopf", "z-zustand", "z-band", "z-raster", "z-netz",
+                 "logtext", "stempel"]
+    # The detail box exists only when there are peers — without them the
+    # fallback list stands there, and rightly so.
+    if case != "leer":
+        idents.append("peerdetail")
+    for ident in idents:
+        check(f"id={ident}" in page, f"id '{ident}' present in the markup")
+
+
+def check_page(page, case, nd=None, language="de"):
+    E = EXPECTED[language]
+    print("\n  Structure")
+    checker = FormChecker()
+    checker.feed(page)
+    check(not checker.faults and not checker.stack, "HTML is well formed",
+          ", ".join(checker.faults + [f"<{t}> offen" for t in checker.stack]))
+
+    scripts = re.findall(r"<script([^>]*)>", page)
+    check(len(scripts) == 1 and re.fullmatch(r' src="dash\.js\?v=[0-9a-f]{8}"',
+                                             scripts[0]),
+          "script included only as its own file", str(scripts))
+
+    # Fingerprint on the URL: without it the browser serves old rules to new
+    # markup for up to ten minutes after a program swap. On the Pi that turned
+    # into green blocks inside the cards on 2026-08-23.
+    check(re.search(r'href="stil\.css\?v=[0-9a-f]{8}"', page) is not None,
+          "style carries a fingerprint against the cache")
+    check("onclick" not in page and "onmouse" not in page
+          and "javascript:" not in page,
+          "no event handlers in the markup")
+    check("Content-Security-Policy" in page and "'unsafe-inline'" not in page,
+          "strict Content Security Policy without unsafe-inline")
+
+    # The CSP drops style attributes in the markup, not only <style> blocks.
+    # That is why the progress bar always showed full on the Pi on
+    # 2026-08-23: its width was an inline style. Geometry belongs in SVG
+    # attributes, colour in a class.
+    inline = re.findall(r'style="[^"]*"', page)
+    check(not inline,
+          "no style attribute in the markup (the CSP would drop it)",
           " | ".join(sorted(set(inline))[:4]))
-    melde("<style" not in seite, "kein Stilblock in der Seite")
+    check("<style" not in page, "no style block in the page")
 
-    zonen = zonen_aus(seite)
-    print("\n  Zonen")
-    for name, karten in zonen.items():
-        print(f"        {name:<10} {', '.join(karten) or '(leer)'}")
+    zones = zones_of(page)
+    print("\n  Zones")
+    for name, cards in zones.items():
+        print(f"        {name:<10} {', '.join(cards) or '(leer)'}")
 
-    # Reihenfolge, nicht nur Vorhandensein: Sie ist bewusst gewaehlt und
-    # ergab sich vorher zufaellig aus der Aufrufreihenfolge der sammle_*.
-    erwartet_raster = ["System", "Netzwerk-Eckdaten", "Mempool &amp; Gebühren"]
-    melde(zonen.get("raster") == erwartet_raster,
-          "Karten stehen in der festgelegten Reihenfolge",
-          " | ".join(zonen.get("raster", [])))
+    # Order, not just presence: it is chosen deliberately and used to fall out
+    # of the order in which the collect_* functions happen to be called.
+    expected_grid = E["raster"]
+    check(zones.get("raster") == expected_grid,
+          "cards stand in the defined order",
+          " | ".join(zones.get("raster", [])))
 
-    # Diese drei Karten sind aufgeloest worden. Ihre Angaben stehen jetzt im
-    # Kennzahlenband, in 'Verbundene Knoten' und in der Kopfzeile.
-    for weg in ("Blockchain", "Netzwerk", "Aktualisierungen"):
-        melde(weg not in zonen.get("raster", []),
-              f"Karte '{weg}' ist aufgeloest")
+    # These three cards were dissolved. Their figures now live in the metrics
+    # bar, in 'Connected nodes' and in the page header.
+    for gone in E["aufgeloest"]:
+        check(gone not in zones.get("raster", []),
+              f"card '{gone}' is dissolved")
 
-    melde("Verbundene Knoten" in " ".join(zonen.get("netz", [])),
-          "Netzkarte steht vor dem Kartenraster")
+    check(E["netz"] in " ".join(zones.get("netz", [])),
+          "network map comes before the card grid")
 
-    print("\n  Kopfzeile")
-    kopf = re.search(r'<div id=z-kopf>(.*?)</div></div>', seite, re.S)
-    inhalt = kopf.group(1) if kopf else ""
-    melde("Core 31.1" in inhalt, "Fassung von Bitcoin Core in der Kopfzeile",
-          re.sub(r"<[^>]+>", " ", inhalt).strip())
-    melde("electrs 0.11.1" in inhalt, "Fassung von electrs in der Kopfzeile")
-    melde("läuft seit" in inhalt, "Laufzeit des Nodes in der Kopfzeile")
-    melde("kopfinfo gut" in inhalt,
-          "alles aktuell wird gruen und ohne Pfeil gezeigt")
-    melde(zonen.get("protokoll") == ["Protokoll"], "Protokollkarte vorhanden")
+    print("\n  Page header")
+    head = re.search(r'<div id=z-kopf>(.*?)</div></div>', page, re.S)
+    content = head.group(1) if head else ""
+    check("Core 31.1" in content, "Bitcoin Core version in the header",
+          re.sub(r"<[^>]+>", " ", content).strip())
+    check("electrs 0.11.1" in content, "electrs version in the header")
+    check(E["laufzeit"] in content, "node uptime in the header")
+    check("kopfinfo gut" in content,
+          "all current is shown green and without an arrow")
+    check(zones.get("protokoll") == [E["protokoll"]], "log card present")
 
-    # Zweiteilung: links alles Ausgewertete, rechts das rohe Protokoll. Die
-    # Kopfzeile steht darueber und laeuft ueber beide Spalten.
-    print("\n  Zweispaltiger Aufbau")
-    melde(re.search(r"</header>\s*<div class=inhalt><div class=links>", seite)
+    # Split in two: everything interpreted on the left, the raw log on the
+    # right. The header sits above and spans both columns.
+    print("\n  Two-column layout")
+    check(re.search(r"</header>\s*<div class=inhalt><div class=links>", page)
           is not None,
-          "Kopfzeile ueber beiden Spalten, danach die Aufteilung")
-    # Genau an der Spaltengrenze trennen, nicht am naechstbesten </div> —
-    # sonst reicht der vermeintlich linke Teil in die rechte Spalte hinein
-    # und die Pruefungen darunter sind wertlos.
-    grenze = seite.find("<div class=rechts>")
-    melde(grenze > 0, "die rechte Spalte ist als eigener Block angelegt")
-    anfang = seite.find("<div class=links>")
-    inhalt_links = seite[anfang:grenze] if grenze > anfang > 0 else ""
-    inhalt_rechts = seite[grenze:] if grenze > 0 else ""
+          "header above both columns, then the split")
+    # Split exactly at the column boundary, not at the next best </div> —
+    # otherwise the supposedly left part reaches into the right column and
+    # every check below is worthless.
+    boundary = page.find("<div class=rechts>")
+    check(boundary > 0, "the right column is its own block")
+    start = page.find("<div class=links>")
+    left_side = page[start:boundary] if boundary > start > 0 else ""
+    right_side = page[boundary:] if boundary > 0 else ""
 
     for zone in ("z-zustand", "z-band", "z-weit", "z-raster", "z-voll"):
-        melde(zone in inhalt_links, f"'{zone}' steht in der linken Spalte")
+        check(zone in left_side, f"'{zone}' sits in the left column")
     for zone in ("z-netz", "logtext"):
-        melde(zone in inhalt_rechts, f"'{zone}' steht in der rechten Spalte")
-    melde("z-netz" not in inhalt_links and "logtext" not in inhalt_links,
-          "nichts davon steht doppelt in der linken Spalte")
+        check(zone in right_side, f"'{zone}' sits in the right column")
+    check("z-netz" not in left_side and "logtext" not in left_side,
+          "none of it appears twice in the left column")
 
-    # Das Protokoll darf die Seitenhoehe nicht bestimmen. 150 Zeilen sind
-    # rund 2670 px, die linke Spalte etwa 920 — ohne Begrenzung waere die
-    # Seite dreimal so lang wie noetig. Am 23.08.2026 war sie das.
-    print("\n  Hoehe des Protokolls")
-    zeilen = (AUSGABE / "protokoll.txt").read_text(encoding="utf-8").count("\n") + 1
-    natuerlich = zeilen * 11.5 * 1.55
-    melde(zeilen >= 100,
-          f"die Attrappe liefert ein volles Protokoll ({zeilen} Zeilen, "
-          f"{natuerlich:.0f} px natuerliche Hoehe)")
+    # The log must not dictate the page height. 150 lines are about 2670 px,
+    # the left column about 920 — without a cap the page would be three times
+    # as long as needed. On 2026-08-23 it was.
+    print("\n  Height of the log")
+    lines = (OUTPUT / "log.txt").read_text(encoding="utf-8").count("\n") + 1
+    natural = lines * 11.5 * 1.55
+    check(lines >= 100,
+          f"the mock delivers a full log ({lines} lines, "
+          f"{natural:.0f} px natural height)")
 
-    eng = (AUSGABE / "stil.css").read_text(encoding="utf-8")
-    eng = eng.replace("\n", "").replace(" ", "")
-    melde("<div class=logbox>" in seite,
-          "das <pre> steckt in einem Kasten, der die Hoehe vorgibt")
-    melde(".protokollpre{position:absolute;inset:0" in eng,
-          "und liegt darin absolut, traegt also nichts zur Hoehe bei")
-    melde(".logbox{flex:1;min-height:0" in eng,
-          "der Kasten nimmt sich den uebrigen Platz der Spalte")
+    tight = (OUTPUT / "stil.css").read_text(encoding="utf-8")
+    tight = tight.replace("\n", "").replace(" ", "")
+    check("<div class=logbox>" in page,
+          "the <pre> sits in a box that sets the height")
+    check(".protokollpre{position:absolute;inset:0" in tight,
+          "and lies absolutely inside it, so adds no height")
+    check(".logbox{flex:1;min-height:0" in tight,
+          "the box claims the remaining space of the column")
 
-    stil = (AUSGABE / "stil.css").read_text(encoding="utf-8")
-    knapp = stil.replace("\n", "").replace(" ", "")
+    style = (OUTPUT / "stil.css").read_text(encoding="utf-8")
+    terse = style.replace("\n", "").replace(" ", "")
 
-    # Schaltflaechen duerfen ausschliesslich die Zwischenablage anfassen.
-    # Alles, was den Node erreichen koennte, gehoert nicht auf diese Seite.
-    knoepfe = re.findall(r"<button([^>]*)>", seite)
-    melde(all("kopierknopf" in k for k in knoepfe),
-          f"Schaltflaechen nur zum Kopieren ({len(knoepfe)} Stueck)",
-          " | ".join(k for k in knoepfe if "kopierknopf" not in k))
-    melde("<form" not in seite and "action=" not in seite,
-          "kein Formular, keine Aktion im Markup")
+    # Buttons may touch the clipboard and nothing else. Anything that could
+    # reach the node has no place on this page.
+    buttons = re.findall(r"<button([^>]*)>", page)
+    check(all("kopierknopf" in k for k in buttons),
+          f"buttons for copying only ({len(buttons)} of them)",
+          " | ".join(k for k in buttons if "kopierknopf" not in k))
+    check("<form" not in page and "action=" not in page,
+          "no form, no action in the markup")
 
-    melde("grid-template-columns:repeat(4,minmax(0,1fr))" in knapp,
-          "das Kennzahlenband hat feste vier Spalten")
+    check("grid-template-columns:repeat(4,minmax(0,1fr))" in terse,
+          "the metrics bar has a fixed four columns")
 
-    # 'auto-fill' legt so viele Spuren an, wie hineinpassen, und laesst die
-    # ueberzaehligen leer — drei Karten in einer vierspurigen Spalte lassen
-    # dann rechts ein Viertel frei. Genau das war am 23.08.2026 zu sehen.
-    melde("repeat(auto-fit,minmax(19rem,1fr))" in knapp,
-          "das Kartenraster benutzt auto-fit, nicht auto-fill")
-    melde("repeat(auto-fill" not in knapp,
-          "und nirgends mehr auto-fill")
+    # 'auto-fill' creates as many tracks as fit and leaves the surplus ones
+    # empty — three cards in a four-track column then leave a quarter free on
+    # the right. Exactly what was on screen on 2026-08-23.
+    check("repeat(auto-fit,minmax(19rem,1fr))" in terse,
+          "the card grid uses auto-fit, not auto-fill")
+    check("repeat(auto-fill" not in terse,
+          "and auto-fill nowhere any more")
 
-    # Die Spaltenzahl muss sich nach der Breite der Spalte richten, nicht
-    # nach der des Fensters — die linke Spalte ist nur halb so breit.
-    melde("container-type:inline-size" in knapp,
-          "die Spalten sind Groessenkontext fuer ihre Karten")
-    melde(knapp.count("@container") >= 2,
-          f"Raster und 24-Stunden-Karten fragen die Spaltenbreite ab "
-          f"({knapp.count('@container')} Abfragen)")
-    melde("@media(min-width:72rem)and(max-width:95.99rem)" not in knapp,
-          "keine am Fenster bemessene Spaltenzahl mehr")
+    # The column count must follow the width of the column, not that of the
+    # window — the left column is only half as wide.
+    check("container-type:inline-size" in terse,
+          "the columns are a size context for their cards")
+    check(terse.count("@container") >= 2,
+          f"grid and 24 hour cards query the column width "
+          f"({terse.count('@container')} queries)")
+    check("@media(min-width:72rem)and(max-width:95.99rem)" not in terse,
+          "no column count measured against the window any more")
 
-    # Eine leere Zone ist unsichtbar, zaehlt in der Flex-Spalte aber als
-    # Element und erzeugt einen zweiten Abstand — das sah aus wie ein
-    # ungleicher Rand. Ohne Inhalt muss sie ganz verschwinden.
-    melde("<div id=z-stoerung></div>" in seite or "class=veraltet" in seite
-          or "fehlerkarte" in seite,
-          "die Stoerungszone ist entweder leer oder gefuellt, nie halb")
-    melde(".links>*:empty,.rechts>*:empty{display:none}" in knapp,
-          "leere Zonen erzeugen keinen Abstand")
-    # Der Fehler, der am 23.08.2026 die ganze Seite breiter machte als das
-    # Fenster: Rasterelemente haben min-width:auto, und das <pre> des
-    # Protokolls hat mit 'white-space:pre' die Mindestbreite seiner laengsten
-    # Zeile. Ohne diese Regel schiebt es die Spalte aus dem Bild.
-    melde(".links>*,.rechts>*{min-width:0}" in knapp,
-          "die Spalten koennen nicht breiter werden als ihr Anteil")
-    melde("Electrum-Server" in zonen.get("voll", []),
-          "Electrum-Karte in voller Breite")
+    # An empty zone is invisible but still counts as an item in the flex
+    # column and creates a second gap — that looked like an uneven margin.
+    # Without content it has to disappear entirely.
+    check("<div id=z-stoerung></div>" in page or "class=veraltet" in page
+          or "fehlerkarte" in page,
+          "the trouble zone is either empty or filled, never half")
+    check(".links>*:empty,.rechts>*:empty{display:none}" in terse,
+          "empty zones create no gap")
+    # The fault that made the whole page wider than the window on
+    # 2026-08-23: grid items have min-width:auto, and the log's <pre> with
+    # 'white-space:pre' takes the minimum width of its longest line. Without
+    # this rule it pushes the column out of view.
+    check(".links>*,.rechts>*{min-width:0}" in terse,
+          "the columns cannot grow wider than their share")
+    check(E["voll"] in zones.get("voll", []),
+          "Electrum card at full width")
 
-    # Die 24-Stunden-Karten stehen immer da, damit das Layout vollstaendig
-    # ist. Ohne Daten tragen sie ein Geruest.
-    for karte in ("Volumen · 24 Stunden", "Gebührenverlauf · 24 Stunden"):
-        melde(karte in zonen.get("weit", []), f"Karte '{karte}' in halber Breite")
+    # The 24 hour cards are always present so the layout is complete.
+    # Without data they carry a skeleton.
+    for card in E["weit"]:
+        check(card in zones.get("weit", []), f"card '{card}' at half width")
 
-    if lage != "synchron":
-        print("\n  Platzhalter")
-        gerueste = re.findall(r'class="minikurve geruest"', seite)
-        melde(len(gerueste) >= 3,
-              f"Geruest statt Grafik, wo Daten fehlen ({len(gerueste)} Stueck)")
+    if case != "synchron":
+        print("\n  Placeholders")
+        skeletons = re.findall(r'class="minikurve geruest"', page)
+        check(len(skeletons) >= 3,
+              f"skeleton instead of graph where data is missing ({len(skeletons)})")
 
-        # Der wichtigste Punkt: keine erfundenen Zahlen. In den Karten ohne
-        # Daten darf nichts stehen, was man fuer eine Messung halten koennte.
-        for karte in ("Volumen · 24 Stunden", "Gebührenverlauf · 24 Stunden"):
+        # The most important point: no invented numbers. The cards without
+        # data must hold nothing that could be taken for a measurement.
+        for card in E["weit"]:
             block = re.search(
-                r"<h2>" + re.escape(karte) + r"</h2>(.*?)</section>", seite, re.S)
-            werte = re.findall(r"<dd[^>]*>([^<]*)</dd>", block.group(1) if block else "")
-            melde(all(w.strip() in ("—", "") for w in werte),
-                  f"'{karte}' zeigt Striche statt erfundener Werte",
-                  " | ".join(w for w in werte if w.strip() not in ("—", "")))
-        melde("Erscheint, sobald die Kette steht" in seite,
-              "die Karten sagen, worauf sie warten")
+                r"<h2>" + re.escape(card) + r"</h2>(.*?)</section>", page, re.S)
+            values = re.findall(r"<dd[^>]*>([^<]*)</dd>", block.group(1) if block else "")
+            check(all(w.strip() in ("—", "") for w in values),
+                  f"'{card}' shows dashes instead of invented values",
+                  " | ".join(w for w in values if w.strip() not in ("—", "")))
+        check(E["warten"] in page,
+              "the cards say what they are waiting for")
 
-    print("\n  Kennzahlenband")
-    kacheln = re.findall(r"<div class=klabel>(.*?)</div>", seite)
-    melde(len(kacheln) >= 3, f"{len(kacheln)} Kacheln im Band", ", ".join(kacheln))
+    print("\n  Metrics bar")
+    tiles = re.findall(r"<div class=klabel>(.*?)</div>", page)
+    check(len(tiles) >= 3, f"{len(tiles)} tiles in the bar", ", ".join(tiles))
 
-    print("\n  Netzkarte")
-    if lage == "leer":
-        # Ohne Peer-Daten muss die Karte die Verbindungswerte trotzdem
-        # zeigen — die Karte 'Netzwerk' gibt es nicht mehr, die sie frueher
-        # getragen hat.
-        melde("netzersatz" in seite, "ohne Gegenstellen steht die Ersatzliste da")
-        melde("Verbindungen" in seite, "die Verbindungszahl bleibt sichtbar")
-        # Der Node hat geantwortet, nur mit einer leeren Liste. Dann darf
-        # dort nicht stehen, die Abfrage sei nicht freigeschaltet.
-        melde("06-tor.sh" not in seite,
-              "keine Freischaltungs-Meldung, wenn der Node geantwortet hat")
-        melde("werden abgefragt" in seite,
-              "stattdessen der Hinweis auf die ausstehende Antwort")
+    print("\n  Network map")
+    if case == "leer":
+        # Without peer data the card must still show the connection figures
+        # — the 'Network' card that used to carry them is gone.
+        check("netzersatz" in page, "without peers the fallback list stands there")
+        check(E["verbindungen"] in page, "the connection count stays visible")
+        # The node answered, only with an empty list. In that case it must
+        # not claim the call is not allowed.
+        check("06-tor.sh" not in page,
+              "no not-allowed notice when the node answered")
+        check(E["abgefragt"] in page,
+              "the note about the pending answer instead")
     else:
-        punkte = re.findall(r'<g class="peer [\w ]+" tabindex="0" data-nr="(\d+)"',
-                            seite)
-        melde(len(punkte) == 19, f"eine Zeile je Gegenstelle ({len(punkte)} von 19)")
-        melde([int(n) for n in punkte] == list(range(len(punkte))),
-              "die Zeilen sind fortlaufend nummeriert")
-        melde("id=peerdetail" in seite, "Detailkasten ist angelegt")
+        dots = re.findall(r'<g class="peer [\w ]+" tabindex="0" data-nr="(\d+)"',
+                            page)
+        check(len(dots) == 19, f"one row per peer ({len(dots)} of 19)")
+        check([int(n) for n in dots] == list(range(len(dots))),
+              "the rows are numbered consecutively")
+        check("id=peerdetail" in page, "detail box is present")
 
-        # Die Nabe traegt das Bitcoin-Zeichen als Pfad. Als Schriftzeichen
-        # (U+20BF) waere es in vielen Schriften ein leeres Kaestchen.
+        # The hub carries the Bitcoin mark as an image. As a character
+        # (U+20BF) it would be an empty box in many fonts.
         if nd is not None:
-            pruefe_bitcoinzeichen(nd, seite)
-        melde("Verbundene Knoten" in seite, "Karte traegt eine Ueberschrift")
+            check_logo(nd, page)
+        check(E["netz"] in page, "card carries a heading")
 
-        # Der Faecher haengt links und rechts an der Nabe. Bei ungerader
-        # Anzahl bekommt die linke Seite die eine Zeile mehr.
-        zeilen = re.findall(r'<text x="([\d.]+)"[^>]*text-anchor="(\w+)"'
-                            r'[^>]*class="peerzeile"', seite)
-        links = [x for x, a in zeilen if a == "end"]
-        rechts = [x for x, a in zeilen if a == "start"]
-        melde(len(links) == 10 and len(rechts) == 9,
-              f"Aufteilung auf beide Seiten ({len(links)} links, {len(rechts)} rechts)")
-        melde(all(float(x) < 600 for x in links)
-              and all(float(x) > 600 for x in rechts),
-              "linke Beschriftungen stehen links der Nabe, rechte rechts")
+        # The fan hangs left and right off the hub. With an odd count the
+        # left side gets the extra row.
+        lines = re.findall(r'<text x="([\d.]+)"[^>]*text-anchor="(\w+)"'
+                            r'[^>]*class="peerzeile"', page)
+        left = [x for x, a in lines if a == "end"]
+        right = [x for x, a in lines if a == "start"]
+        check(len(left) == 10 and len(right) == 9,
+              f"split over both sides ({len(left)} left, {len(right)} right)")
+        check(all(float(x) < 600 for x in left)
+              and all(float(x) > 600 for x in right),
+              "left labels sit left of the hub, right ones right")
 
-        # Beschriftung und Punkt muessen auf derselben Hoehe sitzen, sonst
-        # wirkt der Faecher schief. Frueher stand der Text acht Pixel ueber
-        # der Linie, weil dort noch eine Waagerechte verlief.
-        paare = re.findall(
+        # Label and dot must sit at the same height, otherwise the fan looks
+        # crooked. The text used to stand eight pixels above the line because
+        # a horizontal ran there.
+        pairs = re.findall(
             r'<circle cx="[\d.]+" cy="([\d.]+)" r="4\.5"[^>]*/>'
-            r'<text x="[\d.]+" y="([\d.]+)"[^>]*class="peerzeile"', seite)
-        melde(len(paare) == 19, f"{len(paare)} Punkt-Text-Paare gefunden")
-        schief = [(p, t) for p, t in paare if abs(float(p) - float(t)) > 0.01]
-        melde(not schief, "Punkt und Beschriftung liegen auf gleicher Hoehe",
-              " | ".join(f"{p} gegen {t}" for p, t in schief[:3]))
-        melde('dominant-baseline="central"' in seite,
-              "die Schrift ist dabei senkrecht zentriert")
+            r'<text x="[\d.]+" y="([\d.]+)"[^>]*class="peerzeile"', page)
+        check(len(pairs) == 19, f"{len(pairs)} dot/text pairs found")
+        askew = [(p, t) for p, t in pairs if abs(float(p) - float(t)) > 0.01]
+        check(not askew, "dot and label sit at the same height",
+              " | ".join(f"{p} gegen {t}" for p, t in askew[:3]))
+        check('dominant-baseline="central"' in page,
+              "and the text is vertically centred")
 
-        # Die Eckdaten sollen an der Linie stehen, nicht erst beim Zeigen.
-        texte = re.findall(r'class="peerzeile">([^<]*)</text>', seite)
-        melde(all("·" in t for t in texte),
-              "jede Zeile traegt Adresse, Netzart und Kennzahlen",
-              texte[0] if texte else "")
+        # The key figures belong on the line, not only when pointing.
+        texts = re.findall(r'class="peerzeile">([^<]*)</text>', page)
+        check(all("·" in t for t in texts),
+              "every row carries address, network type and figures",
+              texts[0] if texts else "")
 
-        # Ein SVG schneidet alles ab, was ueber sein viewBox hinausragt. Am
-        # 23.08.2026 war die Breite fest auf 1200 gesetzt, und bei Latenzen
-        # mit sechs Stellen verschwand das Ende jeder rechten Zeile.
-        rahmen = re.search(r'class=netzkarte viewBox="0 0 (\d+) (\d+)"', seite)
-        melde(rahmen is not None, "die Netzkarte hat ein viewBox")
-        if rahmen:
-            breite = int(rahmen.group(1))
-            felder = re.findall(
+        # An SVG clips everything beyond its viewBox. On 2026-08-23 the
+        # width was fixed at 1200, and with six-digit latencies the end of
+        # every right-hand line disappeared.
+        frame = re.search(r'class=netzkarte viewBox="0 0 (\d+) (\d+)"', page)
+        check(frame is not None, "the network map has a viewBox")
+        if frame:
+            width = int(frame.group(1))
+            fields = re.findall(
                 r'<text x="([\d.]+)" y="[\d.]+" text-anchor="(\w+)"'
-                r' class="peerzeile">([^<]*)</text>', seite)
-            zeichen = 12.5 * 0.63          # muss zu SCHRIFT_PEER passen
-            heraus = []
-            for x, anker, text in felder:
-                x, spanne = float(x), len(text) * zeichen
-                links, rechts = ((x - spanne, x) if anker == "end"
-                                 else (x, x + spanne))
-                if links < 0 or rechts > breite:
-                    heraus.append(text[:28])
-            melde(not heraus,
-                  f"alle {len(felder)} Beschriftungen passen in die Zeichnung",
-                  " | ".join(heraus[:3]))
+                r' class="peerzeile">([^<]*)</text>', page)
+            mark = 12.5 * 0.63          # muss zu PEER_FONT passen
+            outside = []
+            for x, anchor, text in fields:
+                x, span = float(x), len(text) * mark
+                left, right = ((x - span, x) if anchor == "end"
+                                 else (x, x + span))
+                if left < 0 or right > width:
+                    outside.append(text[:28])
+            check(not outside,
+                  f"all {len(fields)} labels fit inside the drawing",
+                  " | ".join(outside[:3]))
 
-    print("\n  Kopierfelder")
-    felder = re.findall(
+    print("\n  Copy fields")
+    fields = re.findall(
         r'<span class=kopierlabel>(.*?)</span>.*?<code class=kopier[^>]*>(.*?)</code>',
-        seite, re.S)
-    melde(len(felder) == 2, f"zwei Adressen zum Kopieren ({len(felder)} gefunden)")
-    for bezeichnung, wert in felder:
-        melde("\n" not in wert and "<" not in wert,
-              f"'{bezeichnung}' steht als reiner Text da", f"{len(wert)} Zeichen")
+        page, re.S)
+    check(len(fields) == 2, f"two addresses to copy ({len(fields)} found)")
+    for label, value in fields:
+        check("\n" not in value and "<" not in value,
+              f"'{label}' stands there as plain text", f"{len(value)} Zeichen")
 
-    # Der Text muss umbrechen statt aus der Karte zu laufen: Eine
-    # Onion-Adresse ist 70 Zeichen lang und passt in keine halbe Kartenbreite.
-    css = (AUSGABE / "stil.css").read_text(encoding="utf-8")
-    eng_css = css.replace("\n", "").replace(" ", "")
-    melde("white-space:nowrap" not in eng_css.replace("white-space:nowrap;", "", 0)
-          or "word-break:break-all" in eng_css,
-          "Kopierfelder brechen um statt ueberzulaufen")
-    melde("overflow-wrap:anywhere" in eng_css,
-          "und brechen notfalls mitten im Wort")
+    # The text must wrap instead of running out of the card: an onion address
+    # is 70 characters and fits into no half card width.
+    css = (OUTPUT / "stil.css").read_text(encoding="utf-8")
+    tight_css = css.replace("\n", "").replace(" ", "")
+    check("white-space:nowrap" not in tight_css.replace("white-space:nowrap;", "", 0)
+          or "word-break:break-all" in tight_css,
+          "copy fields wrap instead of overflowing")
+    check("overflow-wrap:anywhere" in tight_css,
+          "and break mid-word if they must")
 
-    knoepfe = re.findall(r'class=kopierknopf data-wert="([^"]*)"', seite)
-    melde(len(knoepfe) == len(felder),
-          f"je Adresse ein Kopierknopf ({len(knoepfe)} zu {len(felder)})")
-    melde(all(w for w in knoepfe), "jeder Knopf kennt seinen Wert")
-    skript_roh = (AUSGABE / "dash.js").read_text(encoding="utf-8")
-    # navigator.clipboard gibt es nur ueber HTTPS. Diese Seite laeuft im
-    # Heimnetz ueber http:// — ohne Rueckfall waere der Knopf dort wirkungslos.
-    melde("execCommand" in skript_roh and "isSecureContext" in skript_roh,
-          "mit Rueckfall, weil es ueber http:// keine Zwischenablage-Schnittstelle gibt")
+    buttons = re.findall(r'class=kopierknopf data-wert="([^"]*)"', page)
+    check(len(buttons) == len(fields),
+          f"one copy button per address ({len(buttons)} to {len(fields)})")
+    check(all(w for w in buttons), "every button knows its value")
+    script_raw = (OUTPUT / "dash.js").read_text(encoding="utf-8")
+    # navigator.clipboard exists only over HTTPS. This page runs on the local
+    # network over http:// — without a fallback the button would do nothing.
+    check("execCommand" in script_raw and "isSecureContext" in script_raw,
+          "with a fallback, because http:// has no clipboard interface")
 
-    print("\n  Darstellung der Zahlen")
-    # Versionsnummern sind keine Dezimalzahlen — "31.1.0" bleibt so, wie es ist.
-    keine_zahlen = ("version", "bitcoin core", "electrs", "stand der", "kennung")
-    verdaechtig = []
-    for bez, wert in re.findall(r"<dt[^>]*>([^<]*)</dt><dd[^>]*>([^<]*)</dd>", seite):
-        if any(k in bez.lower() for k in keine_zahlen):
+    print("\n  Number formatting")
+    # Version numbers are not decimals — "31.1.0" stays as it is.
+    no_numbers = ("version", "bitcoin core", "electrs", "stand der", "kennung",
+                    "identifier", "state of")
+    # We look for the WRONG decimal separator in each case: a period between
+    # digits in German, a comma in the same spot in English. Thousands
+    # separators do not count because three digits follow there.
+    wrong = (r"\d\.\d{1,2}(?!\d)" if language == "de" else r"\d,\d{1,2}(?!\d)")
+    suspect = []
+    for bez, value in re.findall(r"<dt[^>]*>([^<]*)</dt><dd[^>]*>([^<]*)</dd>", page):
+        if any(k in bez.lower() for k in no_numbers):
             continue
-        # Punkt als Dezimaltrenner: Ziffer, Punkt, ein bis zwei Ziffern, danach
-        # keine weitere Ziffer. Tausenderpunkte wie 963.634 bleiben unbehelligt.
-        if re.search(r"\d\.\d{1,2}(?!\d)", wert):
-            verdaechtig.append(f"{bez}: {wert}")
-    melde(not verdaechtig, "durchgaengig deutsches Komma in den Karten",
-          " | ".join(verdaechtig))
+        if re.search(wrong, value):
+            suspect.append(f"{bez}: {value}")
+    check(not suspect,
+          f"'{E['decimal_sep']}' used as decimal separator throughout the cards",
+          " | ".join(suspect))
 
-    # Die grossen Zahlen stehen nicht in einer <dl>. Genau dort ist am
-    # 23.08.2026 ein "11.24 %" durchgerutscht, weil die Pruefung darueber
-    # nur Karten angesehen hat.
-    gross = re.findall(r"<div class=(?:zwort|zzahl|kwert)>([^<]*)</div>", seite)
-    schlecht = [w for w in gross if re.search(r"\d\.\d{1,2}(?!\d)", w)]
-    melde(not schlecht, f"deutsches Komma auch in den {len(gross)} grossen Zahlen",
-          " | ".join(schlecht))
+    # The big numbers do not live in a <dl>. That is exactly where a
+    # "11.24 %" slipped through on 2026-08-23, because the check above only
+    # looked at cards.
+    big = re.findall(r"<div class=(?:zwort|zzahl|kwert)>([^<]*)</div>", page)
+    bad = [w for w in big if re.search(wrong, w)]
+    check(not bad,
+          f"correct decimal separator in the {len(big)} big numbers too",
+          " | ".join(bad))
 
-    # Shell-Skripte geben bewusst ASCII aus, die Seite nicht. Das ist hier
-    # dreimal danebengegangen ("Bloecke", "Schaetzung", "waehrend"), deshalb
-    # eine feste Liste der Woerter, die erfahrungsgemaess durchrutschen.
-    umschriften = ("waehrend", "moeglich", "Bloecke", "bloecke", "Schaetzung",
-                   "Eintraege", "Pruefung", "naechste", "Groesse", "koennen",
-                   "muessen", "gehoert", "zurueck", "ueber ", "fuer ")
-    gefunden = [w for w in umschriften if w in seite]
-    melde(not gefunden, "keine ASCII-Umschrift im sichtbaren Text",
-          " | ".join(gefunden))
+    if language == "de":
+        # Shell scripts deliberately print ASCII, the page does not. This
+        # went wrong three times ("Bloecke", "Schaetzung", "waehrend"), hence
+        # a fixed list of the words that tend to slip through. In English
+        # there is nothing to transliterate.
+        ascii_forms = ("waehrend", "moeglich", "Bloecke", "bloecke", "Schaetzung",
+                       "Eintraege", "Pruefung", "naechste", "Groesse", "koennen",
+                       "muessen", "gehoert", "zurueck", "ueber ", "fuer ")
+        found = [w for w in ascii_forms if w in page]
+        check(not found, "no ASCII transliteration in the visible text",
+              " | ".join(found))
+    else:
+        # The other way round: no German leftovers may remain in the English
+        # version. Umlauts are the most reliable marker — they appear in no
+        # English word.
+        leftovers = sorted(set(re.findall(r"[A-Za-z]*[äöüÄÖÜß][A-Za-z]*", page)))
+        # Identifiers of foreign nodes and log lines do not count: what
+        # stands there is decided by the peer, not by this program.
+        without_log = re.sub(r"<code id=logtext>.*?</code>", "", page, flags=re.S)
+        leftovers = [w for w in leftovers if w in without_log]
+        check(not leftovers, "no German leftovers in the English version",
+              " | ".join(leftovers[:6]))
 
-    print("\n  Sicherheit")
-    melde("rpcpassword" not in seite.lower() and "probe" not in seite,
-          "kein Zugangsdatum in der Seite")
-    melde(GIFT not in seite,
-          "Kennung eines fremden Knotens landet nicht als Markup in der Seite")
-    grafiken = re.findall(r"<dd class=grafik>(.*?)</dd>", seite, re.S)
-    melde(all(g.lstrip().startswith("<svg") or g.lstrip().startswith("<span")
-              for g in grafiken),
-          f"alle {len(grafiken)} Grafikfelder enthalten nur erzeugtes SVG")
+    print("\n  Safety")
+    check("rpcpassword" not in page.lower() and "probe" not in page,
+          "no credentials in the page")
+    check(POISON not in page,
+          "a foreign node identifier does not land as markup in the page")
+    graphics = re.findall(r"<dd class=grafik>(.*?)</dd>", page, re.S)
+    check(all(g.lstrip().startswith("<svg") or g.lstrip().startswith("<span")
+              for g in graphics),
+          f"all {len(graphics)} graphic fields hold generated SVG only")
 
 
-def pruefe_bitcoinzeichen(nd, seite):
-    """Das Zeichen ist ein Bild, keine nachgebaute Geometrie.
+def check_logo(nd, page):
+    """The mark is an image, not rebuilt geometry.
 
-    Es war dreimal von Hand aus Rechtecken und Boegen zusammengesetzt und
-    dreimal falsch — und jeder Versuch kostete eine Runde ueber ein
-    Bildschirmfoto, weil sich hier nichts ansehen laesst. Ein Logo ist keine
-    Geometrieaufgabe. Geprueft wird jetzt, dass das Bild da ist, richtig
-    sitzt und in den Kreis passt.
+    It was assembled by hand from rectangles and arcs three times and was
+    wrong three times — and every attempt cost a round trip via a screenshot,
+    because nothing can be looked at here. A logo is not a geometry exercise.
+    What is checked now is that the image is present, sits correctly and fits
+    into the circle.
     """
-    treffer = re.search(
+    hit = re.search(
         r'<image href="bitcoin\.png\?v=([0-9a-f]{8})" x="([\d.]+)" y="([\d.]+)" '
-        r'width="(\d+)" height="(\d+)"/>', seite)
-    melde(treffer is not None, "das Bitcoin-Zeichen steht als Bild in der Nabe")
-    if not treffer:
+        r'width="(\d+)" height="(\d+)"/>', page)
+    check(hit is not None, "the Bitcoin mark stands as an image in the hub")
+    if not hit:
         return
 
-    fingerabdruck, x, y, breite, hoehe = treffer.groups()
-    x, y, breite, hoehe = float(x), float(y), int(breite), int(hoehe)
-    melde(fingerabdruck == nd.BITCOIN_V,
-          "es traegt den Fingerabdruck gegen den Zwischenspeicher")
-    melde(breite == hoehe == nd.MARKE_R * 2,
-          f"es ist quadratisch und {nd.MARKE_R * 2} Einheiten gross "
-          f"({breite} x {hoehe})")
+    fingerprint, x, y, width, height = hit.groups()
+    x, y, width, height = float(x), float(y), int(width), int(height)
+    check(fingerprint == nd.BITCOIN_V,
+          "it carries the fingerprint against the cache")
+    check(width == height == nd.LOGO_R * 2,
+          f"it is square and {nd.LOGO_R * 2} units across "
+          f"({width} x {height})")
 
-    # Mittig auf der Nabe der Netzkarte
-    rahmen = re.search(r'class=netzkarte viewBox="0 0 (\d+) (\d+)"', seite)
-    if rahmen:
-        kb, kh = int(rahmen.group(1)), int(rahmen.group(2))
-        mitte_x, mitte_y = x + breite / 2, y + hoehe / 2
-        melde(abs(mitte_x - kb / 2) < 1 and abs(mitte_y - kh / 2) < 1,
-              "es sitzt genau auf der Nabe",
+    # Centred on the hub of the network map
+    frame = re.search(r'class=netzkarte viewBox="0 0 (\d+) (\d+)"', page)
+    if frame:
+        kb, kh = int(frame.group(1)), int(frame.group(2))
+        mitte_x, mitte_y = x + width / 2, y + height / 2
+        check(abs(mitte_x - kb / 2) < 1 and abs(mitte_y - kh / 2) < 1,
+              "it sits exactly on the hub",
               f"{mitte_x:.1f}/{mitte_y:.1f} statt {kb / 2:.1f}/{kh / 2:.1f}")
 
     # Die Datei selbst
-    bild = AUSGABE / "bitcoin.png"
-    melde(bild.exists(), "bitcoin.png wurde geschrieben")
-    if bild.exists():
-        roh = bild.read_bytes()
-        melde(roh[:8] == b"\x89PNG\r\n\x1a\n", "und ist ein gueltiges PNG")
-        melde(roh == nd.BITCOIN_PNG, "und stimmt mit der eingebetteten Fassung ueberein")
-        melde(len(roh) < 8000, f"und bleibt klein ({len(roh)} Bytes)")
+    image = OUTPUT / "bitcoin.png"
+    check(image.exists(), "bitcoin.png was written")
+    if image.exists():
+        raw = image.read_bytes()
+        check(raw[:8] == b"\x89PNG\r\n\x1a\n", "and is a valid PNG")
+        check(raw == nd.BITCOIN_PNG, "and matches the embedded copy")
+        check(len(raw) < 8000, f"and stays small ({len(raw)} bytes)")
 
 
-def pruefe_status(lage):
-    """status.json ist die Lese-API. Sie muss zur Seite passen."""
-    print("\n  Lese-API")
-    pfad = AUSGABE / "status.json"
-    melde(pfad.exists(), "status.json wurde geschrieben")
-    if not pfad.exists():
+def check_status(case):
+    """status.json is the read-only API. It has to match the page."""
+    print("\n  Read-only API")
+    path = OUTPUT / "status.json"
+    check(path.exists(), "status.json was written")
+    if not path.exists():
         return
     try:
-        daten = json.loads(pfad.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        melde(False, "status.json ist gueltiges JSON", str(e))
+        check(False, "status.json is valid JSON", str(e))
         return
-    melde(True, "status.json ist gueltiges JSON", f"{pfad.stat().st_size} Bytes")
+    check(True, "status.json is valid JSON", f"{path.stat().st_size} Bytes")
 
-    for schluessel in ("erzeugt", "stempel", "titel", "stufe", "zonen", "peers"):
-        melde(schluessel in daten, f"Feld '{schluessel}' vorhanden")
+    for key in ("erzeugt", "stempel", "titel", "stufe", "zonen", "peers"):
+        check(key in data, f"field '{key}' present")
 
-    zonen = daten.get("zonen", {})
-    melde(set(zonen) == {"kopf", "zustand", "stoerung", "band", "netz",
+    zones = data.get("zonen", {})
+    check(set(zones) == {"kopf", "zustand", "stoerung", "band", "netz",
                           "raster", "weit", "voll"},
-          "alle Zonen enthalten", ", ".join(sorted(zonen)))
+          "all zones present", ", ".join(sorted(zones)))
 
-    peers = daten.get("peers", [])
-    if lage == "leer":
-        melde(peers == [], "ohne Gegenstellen bleibt die Liste leer")
+    peers = data.get("peers", [])
+    if case == "leer":
+        check(peers == [], "without peers the list stays empty")
     else:
-        melde(len(peers) == 19, f"{len(peers)} Gegenstellen in der Liste")
-        melde(any(GIFT in p.get("version", "") for p in peers),
-              "fremde Kennung steht als reiner Wert in der Liste")
-        markup = [z for z in zonen.values() if GIFT in z]
-        melde(not markup,
-              "fremde Kennung steht in keiner der HTML-Zonen")
+        check(len(peers) == 19, f"{len(peers)} peers in the list")
+        check(any(POISON in p.get("version", "") for p in peers),
+              "the foreign identifier is a plain value in the list")
+        markup = [z for z in zones.values() if POISON in z]
+        check(not markup,
+              "the foreign identifier is in none of the HTML zones")
 
-    text = (AUSGABE / "protokoll.txt")
-    melde(text.exists(), "protokoll.txt wurde geschrieben")
+    text = (OUTPUT / "log.txt")
+    check(text.exists(), "log.txt was written")
     if text.exists():
-        inhalt = text.read_text(encoding="utf-8")
-        melde("<html" not in inhalt and "<pre" not in inhalt,
-              "protokoll.txt ist reiner Text ohne Markup")
+        content = text.read_text(encoding="utf-8")
+        check("<html" not in content and "<pre" not in content,
+              "log.txt is plain text without markup")
 
     for name in ("stil.css", "dash.js"):
-        melde((AUSGABE / name).exists(), f"{name} wurde geschrieben")
+        check((OUTPUT / name).exists(), f"{name} was written")
 
-    # Ein Tippfehler in dash.js wuerde die gesamte bewegliche Schicht still
-    # abschalten — die Seite saehe richtig aus und wuerde nur nie aktueller.
-    # Kein anderer Test hier faende das. Wenn node da ist, pruefen wir es.
+    # A typo in dash.js would silently switch off the entire moving layer —
+    # the page would look right and merely never get newer. No other test
+    # here would find that. If node is available, we check it.
     try:
-        r = subprocess.run(["node", "--check", str(AUSGABE / "dash.js")],
+        r = subprocess.run(["node", "--check", str(OUTPUT / "dash.js")],
                            capture_output=True, text=True, timeout=20)
-        melde(r.returncode == 0, "dash.js ist syntaktisch gueltig",
+        check(r.returncode == 0, "dash.js is syntactically valid",
               (r.stderr or "").strip().split("\n")[0])
     except (OSError, subprocess.SubprocessError):
-        print("  [ --  ] dash.js nicht geprueft (node nicht vorhanden)")
+        print("  [ --  ] dash.js not checked (node not available)")
 
 
-def pruefe_tormeldung(nd, cfg):
-    """Der Waechter meldet ueber eine Datei, das Dashboard zeigt sie an.
+def check_tor_notice(nd, cfg):
+    """The watchdog reports through a file, the dashboard displays it.
 
-    Wichtig ist vor allem der Fehlerfall: Wenn 06-tor.sh scheitert, muss das
-    unuebersehbar sein — dann steht der Node moeglicherweise halb umgestellt da.
+    The failure case matters most: if 06-tor.sh fails that must be impossible
+    to miss — the node may then be sitting half converted.
     """
-    print("\n  Tor-Automatik")
-    # Bewusst ausserhalb des Projektordners: Der liegt je nach Umgebung auf
-    # einem Mount, auf dem sich Dateien nicht wieder loeschen lassen.
-    ordner = tempfile.mkdtemp(prefix="torprobe-")
-    pfad = Path(ordner) / "tor.json"
-    cfg["TOR_DATEI"] = str(pfad)
+    print("\n  Tor watchdog")
+    # Deliberately outside the project folder: depending on the environment
+    # that sits on a mount where files cannot be deleted again.
+    folder = tempfile.mkdtemp(prefix="torprobe-")
+    path = Path(folder) / "tor.json"
+    cfg["TOR_FILE"] = str(path)
 
-    faelle = [
-        ("wartet", "", False, "waehrend der Synchronisation still"),
-        ("bereit", "meldung warn", True, "kuendigt die Umstellung an"),
-        ("laeuft", "meldung warn", True, "meldet die laufende Umstellung"),
-        ("fehler", "fehlerkarte", True, "zeigt das Scheitern deutlich"),
-        ("fertig", "", False, "nach getaner Arbeit wieder still"),
+    cases = [
+        ("wartet", "", False, "quiet during the sync"),
+        ("bereit", "meldung warn", True, "announces the switchover"),
+        ("laeuft", "meldung warn", True, "reports the running switchover"),
+        ("fehler", "fehlerkarte", True, "shows the failure clearly"),
+        ("fertig", "", False, "quiet again once the work is done"),
     ]
     try:
-        for zustand, marke, sichtbar, text in faelle:
-            pfad.write_text(json.dumps({
-                "zustand": zustand, "meldung": "Probe",
+        for state, marker, visible, text in cases:
+            path.write_text(json.dumps({
+                "zustand": state, "meldung": "Probe",
                 "treffer": 3, "noetig": 6, "zeit": int(time.time()),
             }), encoding="utf-8")
-            nd.einmal(cfg)
-            seite = (AUSGABE / "index.html").read_text(encoding="utf-8")
+            nd.one_pass(cfg)
+            page = (OUTPUT / "index.html").read_text(encoding="utf-8")
             block = re.search(r"<div id=z-stoerung>(.*?)</div>\s*<div class=band",
-                              seite, re.S)
-            inhalt = block.group(1) if block else ""
-            melde((marke in inhalt) if sichtbar else (inhalt.strip() == ""),
-                  f"Zustand '{zustand}': {text}")
+                              page, re.S)
+            content = block.group(1) if block else ""
+            check((marker in content) if visible else (content.strip() == ""),
+                  f"state '{state}': {text}")
 
-        # Der Abbruchbefehl muss dastehen, solange noch etwas abzubrechen ist.
-        pfad.write_text(json.dumps({"zustand": "bereit", "meldung": "",
+        # The cancel command must be shown while there is still something to cancel.
+        path.write_text(json.dumps({"zustand": "bereit", "meldung": "",
                                     "treffer": 3, "noetig": 6}), encoding="utf-8")
-        nd.einmal(cfg)
-        seite = (AUSGABE / "index.html").read_text(encoding="utf-8")
-        melde("08-tor-automatik.sh --aus" in seite,
-              "der Abbruchbefehl steht in der Ankuendigung")
+        nd.one_pass(cfg)
+        page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+        check("08-tor-automatik.sh --aus" in page,
+              "the cancel command stands in the announcement")
     finally:
-        shutil.rmtree(ordner, ignore_errors=True)
-        cfg.pop("TOR_DATEI", None)
-        nd.einmal(cfg)
+        shutil.rmtree(folder, ignore_errors=True)
+        cfg.pop("TOR_FILE", None)
+        nd.one_pass(cfg)
 
 
-def pruefe_peers_bei_aussetzer(nd, cfg):
-    """Ein Aussetzer bei getpeerinfo darf die Peer-Liste nicht loeschen.
+def check_peers_on_hiccup(nd, cfg):
+    """A hiccup in getpeerinfo must not wipe the peer list.
 
-    Am 23.08.2026 tat er genau das: Bei zwoelf Sekunden Antwortzeit lief die
-    Abfrage gelegentlich ins Zeitlimit, das Dashboard warf alle Gegenstellen
-    weg und zeigte stattdessen "wird von 06-tor.sh freigeschaltet" — obwohl
-    die Methode laengst frei war.
+    On 2026-08-23 it did exactly that: at twelve seconds response time the
+    call occasionally hit the timeout, the dashboard threw away every peer and
+    showed "will be allowed by 06-tor.sh" instead — although the method had
+    long been allowed.
     """
-    print("\n  Gegenstellen bei Aussetzern")
-    nd.einmal(cfg)
-    vorher = len(json.loads(
-        (AUSGABE / "status.json").read_text(encoding="utf-8"))["peers"])
-    melde(vorher > 0, f"im Normalfall stehen {vorher} Gegenstellen da")
+    print("\n  Peers during hiccups")
+    nd.one_pass(cfg)
+    before = len(json.loads(
+        (OUTPUT / "status.json").read_text(encoding="utf-8"))["peers"])
+    check(before > 0, f"in the normal case {before} peers are shown")
 
-    echtes_rpc = nd.rpc
+    real_rpc = nd.rpc
 
-    def stolpernd(c, methode, parameter=None):
-        if methode == "getpeerinfo":
-            raise nd.RpcFehler("Node nicht erreichbar: timed out")
-        return echtes_rpc(c, methode, parameter)
+    def stumbling(c, method, params=None):
+        if method == "getpeerinfo":
+            raise nd.RpcError("Node not reachable: timed out")
+        return real_rpc(c, method, params)
 
-    nd.rpc = stolpernd
+    nd.rpc = stumbling
     try:
-        nd.einmal(cfg)
-        daten = json.loads((AUSGABE / "status.json").read_text(encoding="utf-8"))
-        melde(len(daten["peers"]) == vorher,
-              f"nach einem Aussetzer stehen sie weiterhin da ({len(daten['peers'])})")
-        seite = (AUSGABE / "index.html").read_text(encoding="utf-8")
-        melde("06-tor.sh" not in seite,
-              "und es erscheint keine Freischaltungs-Meldung")
+        nd.one_pass(cfg)
+        data = json.loads((OUTPUT / "status.json").read_text(encoding="utf-8"))
+        check(len(data["peers"]) == before,
+              f"after a hiccup they are still there ({len(data['peers'])})")
+        page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+        check("06-tor.sh" not in page,
+              "and no not-allowed notice appears")
     finally:
-        nd.rpc = echtes_rpc
-        nd.einmal(cfg)
+        nd.rpc = real_rpc
+        nd.one_pass(cfg)
 
 
-def pruefe_verbotene_methoden(nd, cfg):
-    """Was der Node ablehnt, darf nicht alle 30 Sekunden neu gefragt werden.
+def check_denied_methods(nd, cfg):
+    """What the node refuses must not be asked again every 30 seconds.
 
-    Jede abgelehnte Abfrage erzeugt in bitcoind eine Protokollzeile
-    "RPC User dashboard not allowed to call method …" — und die landet direkt
-    in der Protokollanzeige des Dashboards. Auf dem Pi standen dort am
-    23.08.2026 im Minutentakt zwei davon.
+    Every refused call makes bitcoind write a log line "RPC User dashboard not
+    allowed to call method …" — and that lands straight in the log display of
+    the dashboard. On the Pi two of them appeared there every minute on
+    2026-08-23.
     """
-    print("\n  Abgelehnte Methoden")
-    nd.VERBOTEN.clear()
+    print("\n  Refused methods")
+    nd.DENIED.clear()
 
-    # Gezaehlt wird auf der Leitung, nicht am Funktionsaufruf: Die Sperre sitzt
-    # innerhalb von rpc(), ein Zaehler davor wuerde jeden Aufruf mitzaehlen und
-    # nie etwas beweisen.
-    versuche = {"n": 0}
-    echt_oeffnen = nd.urllib.request.urlopen
+    # Counted on the wire, not at the function call: the lock sits inside
+    # rpc(), and a counter in front of it would count every call and prove
+    # nothing.
+    attempts = {"n": 0}
+    real_urlopen = nd.urllib.request.urlopen
 
-    def zaehlend(*a, **k):
-        versuche["n"] += 1
-        return echt_oeffnen(*a, **k)
+    def counting(*a, **k):
+        attempts["n"] += 1
+        return real_urlopen(*a, **k)
 
-    nd.urllib.request.urlopen = zaehlend
+    nd.urllib.request.urlopen = counting
     try:
         for _ in range(5):
             try:
                 nd.rpc(cfg, "gibtesnicht")
-            except nd.RpcFehler:
+            except nd.RpcError:
                 pass
-        melde(versuche["n"] == 1,
-              f"fuenf Aufrufe erreichen den Node genau einmal ({versuche['n']}x)")
-        melde("gibtesnicht" in nd.VERBOTEN, "die Ablehnung ist gemerkt")
+        check(attempts["n"] == 1,
+              f"five calls reach the node exactly once ({attempts['n']}x)")
+        check("gibtesnicht" in nd.DENIED, "the refusal is remembered")
 
-        # Nach Ablauf der Frist wird wieder gefragt — sonst bliebe eine
-        # nachtraeglich freigeschaltete Methode fuer immer aus.
-        nd.VERBOTEN["gibtesnicht"] = time.time() - nd.VERBOTEN_ERNEUT - 1
+        # After the deadline it is asked again — otherwise a method allowed
+        # later would stay missing forever.
+        nd.DENIED["gibtesnicht"] = time.time() - nd.DENIED_RETRY_AFTER - 1
         try:
             nd.rpc(cfg, "gibtesnicht")
-        except nd.RpcFehler:
+        except nd.RpcError:
             pass
-        melde(versuche["n"] == 2,
-              f"nach Ablauf der Frist wird erneut probiert ({versuche['n']}x)")
+        check(attempts["n"] == 2,
+              f"after the deadline it tries again ({attempts['n']}x)")
     finally:
-        nd.urllib.request.urlopen = echt_oeffnen
-        nd.VERBOTEN.clear()
+        nd.urllib.request.urlopen = real_urlopen
+        nd.DENIED.clear()
 
 
-def pruefe_toleranz(nd, cfg):
-    """Ein einzelner Aussetzer darf nicht als Ausfall gelten.
+def check_tolerance(nd, cfg):
+    """A single hiccup must not count as an outage.
 
-    Der Node haelt seinen RPC-Thread an, waehrend er den dbcache auf die SSD
-    schreibt. Genau das hat frueher 'Nicht erreichbar' und Blockhoehe null
-    ausgeloest, obwohl nebenan im Protokoll die Synchronisation weiterlief.
+    The node stalls its RPC thread while writing the dbcache to disk. That is
+    exactly what used to trigger 'not reachable' and a block height of zero,
+    while the log next to it showed the sync carrying on.
     """
-    print("\n  Toleranzfenster")
+    print("\n  Tolerance window")
 
-    def blockhoehe():
-        seite = (AUSGABE / "index.html").read_text(encoding="utf-8")
-        treffer = re.search(r"<div class=zzahl>(.*?)</div>", seite)
-        return treffer.group(1) if treffer else None
+    def block_height():
+        page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+        hit = re.search(r"<div class=zzahl>(.*?)</div>", page)
+        return hit.group(1) if hit else None
 
-    vorher = blockhoehe()
-    echtes_rpc = nd.rpc
+    before = block_height()
+    real_rpc = nd.rpc
     nd.rpc = lambda *a, **k: (_ for _ in ()).throw(
-        nd.RpcFehler("Node nicht erreichbar: timed out"))
+        nd.RpcError("Node not reachable: timed out"))
 
     try:
-        for versuch in (1, 2):
-            nd.einmal(cfg)
-            seite = (AUSGABE / "index.html").read_text(encoding="utf-8")
-            melde("fehlerkarte" not in seite,
-                  f"Aussetzer {versuch}: keine rote Fehlerkarte")
-            melde("class=veraltet" in seite,
-                  f"Aussetzer {versuch}: leiser Hinweis auf alte Werte")
-            melde(blockhoehe() == vorher,
-                  f"Aussetzer {versuch}: Blockhoehe bleibt stehen",
-                  f"{vorher} -> {blockhoehe()}")
+        for attempt in (1, 2):
+            nd.one_pass(cfg)
+            page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+            check("fehlerkarte" not in page,
+                  f"hiccup {attempt}: no red error card")
+            check("class=veraltet" in page,
+                  f"hiccup {attempt}: quiet note about stale values")
+            check(block_height() == before,
+                  f"hiccup {attempt}: block height stays put",
+                  f"{before} -> {block_height()}")
 
-        nd.einmal(cfg)
-        seite = (AUSGABE / "index.html").read_text(encoding="utf-8")
-        melde("fehlerkarte" in seite,
-              "nach drei Aussetzern in Folge steht die Fehlerkarte da")
+        nd.one_pass(cfg)
+        page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+        check("fehlerkarte" in page,
+              "after three hiccups in a row the error card appears")
 
-        # Der Fall direkt nach einem Neustart des Dienstes: kein alter Stand,
-        # an dem sich das Fenster festhalten koennte. Frueher schlug es hier
-        # sofort Alarm, obwohl der Node lief.
-        nd.LETZTER_STAND.clear()
-        nd.FEHLER_IN_FOLGE = 0
-        nd.einmal(cfg)
-        seite = (AUSGABE / "index.html").read_text(encoding="utf-8")
-        melde("fehlerkarte" not in seite,
-              "frisch gestartet: keine Fehlerkarte beim ersten Aussetzer")
-        melde('data-stufe="anlauf"' in seite,
-              "frisch gestartet: die Seite sagt, dass sie noch wartet")
+        # The case right after a service restart: no old state for the window
+        # to hold on to. It used to raise the alarm here immediately although
+        # the node was running.
+        nd.LAST_STATE.clear()
+        nd.FAILURES_IN_ROW = 0
+        nd.one_pass(cfg)
+        page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+        check("fehlerkarte" not in page,
+              "freshly started: no error card on the first hiccup")
+        check('data-stufe="anlauf"' in page,
+              "freshly started: the page says it is still waiting")
     finally:
-        nd.rpc = echtes_rpc
-        nd.FEHLER_IN_FOLGE = 0
-        nd.einmal(cfg)          # sauberen Stand wiederherstellen
+        nd.rpc = real_rpc
+        nd.FAILURES_IN_ROW = 0
+        nd.one_pass(cfg)          # sauberen Stand wiederherstellen
 
 
-def pruefe_zwischenspeicher(nd, cfg):
-    """Die 24-Stunden-Daten duerfen nur einmal geholt werden.
+def check_cache(nd, cfg):
+    """The 24 hour data may be fetched only once.
 
-    144 Bloecke bei jedem Durchlauf neu abzufragen wuerde den Node alle
-    30 Sekunden unnoetig beschaeftigen.
+    Re-querying 144 blocks on every cycle would keep the node needlessly busy
+    every 30 seconds.
     """
-    print("\n  Zwischenspeicher")
-    zaehler = {"n": 0}
-    echtes_rpc = nd.rpc
+    print("\n  Caching")
+    counter = {"n": 0}
+    real_rpc = nd.rpc
 
-    def zaehlend(c, methode, parameter=None):
-        if methode in ("getblockstats", "getblockheader"):
-            zaehler["n"] += 1
-        return echtes_rpc(c, methode, parameter)
+    def counting(c, method, params=None):
+        if method in ("getblockstats", "getblockheader"):
+            counter["n"] += 1
+        return real_rpc(c, method, params)
 
-    # Der Durchlauf davor hat die Speicher schon gefuellt — fuer die Messung
-    # muessen sie leer sein, sonst misst man nichts.
-    nd.BLOCKDATEN.clear()
-    nd.SCHWIERIGKEIT.clear()
+    # The previous cycle has already filled the buffers — for the measurement
+    # they must be empty, otherwise nothing is measured.
+    nd.BLOCK_DATA.clear()
+    nd.DIFFICULTY.clear()
 
-    nd.rpc = zaehlend
-    nd.hole_schwierigkeit(cfg, 915312)
-    nd.hole_blockdaten(cfg, 915312)
-    erste = zaehler["n"]
-    zaehler["n"] = 0
-    nd.hole_schwierigkeit(cfg, 915312)
-    nd.hole_blockdaten(cfg, 915312)
-    nd.rpc = echtes_rpc
-    melde(erste > 100, f"Erstbefuellung holt {erste} Bloecke")
-    melde(zaehler["n"] == 0,
-          f"zweiter Durchlauf holt nichts nach ({zaehler['n']} Abfragen)")
+    nd.rpc = counting
+    nd.fetch_difficulty(cfg, 915312)
+    nd.fetch_block_data(cfg, 915312)
+    first = counter["n"]
+    counter["n"] = 0
+    nd.fetch_difficulty(cfg, 915312)
+    nd.fetch_block_data(cfg, 915312)
+    nd.rpc = real_rpc
+    check(first > 100, f"initial fill fetches {first} blocks")
+    check(counter["n"] == 0,
+          f"second cycle fetches nothing ({counter['n']} calls)")
 
 
-def pruefe_schreibsparsamkeit(nd, cfg):
-    """Unveraendertes darf nicht erneut auf die SSD geschrieben werden."""
-    print("\n  Schreibvorgaenge")
-    geschrieben = []
-    echt = nd.schreibe_datei_atomar
+def check_write_thrift(nd, cfg):
+    """Unchanged content must not be written to disk again."""
+    print("\n  Writes")
+    written = []
+    real = nd.write_file_atomic
 
-    def mitzaehlend(ordner, name, inhalt):
-        ergebnis = echt(ordner, name, inhalt)
+    def counting_writes(folder, name, content):
+        ergebnis = real(folder, name, content)
         if ergebnis:
-            geschrieben.append(name)
+            written.append(name)
         return ergebnis
 
-    nd.schreibe_datei_atomar = mitzaehlend
+    nd.write_file_atomic = counting_writes
     try:
-        nd.schreibe_beiwerk(cfg)
-        melde(not geschrieben,
-              "Stil und Skript werden nicht bei jedem Durchlauf neu geschrieben",
-              ", ".join(geschrieben))
+        nd.write_assets(cfg)
+        check(not written,
+              "style and script are not rewritten on every cycle",
+              ", ".join(written))
     finally:
-        nd.schreibe_datei_atomar = echt
+        nd.write_file_atomic = real
 
 
 def main():
-    zerleger = argparse.ArgumentParser()
-    zerleger.add_argument("--lage", default="synchron",
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--case", default="synchron",
                           choices=["synchron", "sync", "leer"])
-    argumente = zerleger.parse_args()
+    parser.add_argument("--language", default="de", choices=["de", "en"],
+                          help="display language of the generated page")
+    args = parser.parse_args()
 
-    print(f"\n=== Probelauf, Lage '{argumente.lage}' ===")
-    attrappe = subprocess.Popen(
-        [sys.executable, str(HIER / "attrappe.py"),
-         "--port", str(PORT), "--lage", argumente.lage],
+    print(f"\n=== Test run, case '{args.case}', "
+          f"language '{args.language}' ===")
+    mock = subprocess.Popen(
+        [sys.executable, str(HERE / "attrappe.py"),
+         "--port", str(PORT), "--case", args.case],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(50):
@@ -875,37 +1002,41 @@ def main():
             except OSError:
                 time.sleep(.1)
         else:
-            print("  Attrappe kam nicht hoch.")
+            print("  The mock did not come up.")
             return 1
 
-        nd = lade_dashboard()
-        ersetze_systemteile(nd, argumente.lage)
-        cfg = nd.lies_konfiguration(schreibe_konfiguration())
-        nd.einmal(cfg)
+        nd = load_dashboard()
+        replace_system_parts(nd, args.case)
+        cfg = nd.read_config(write_config(args.language))
+        nd.one_pass(cfg)
 
-        seite = (AUSGABE / "index.html").read_text(encoding="utf-8")
-        print(f"\n  {len(seite)} Bytes nach {AUSGABE / 'index.html'}")
-        pruefe_seite(seite, argumente.lage, nd)
-        pruefe_status(argumente.lage)
-        pruefe_schreibsparsamkeit(nd, cfg)
-        pruefe_tormeldung(nd, cfg)
-        if argumente.lage != "leer":
-            pruefe_peers_bei_aussetzer(nd, cfg)
-        pruefe_verbotene_methoden(nd, cfg)
-        pruefe_toleranz(nd, cfg)
-        if argumente.lage == "synchron":
-            pruefe_zwischenspeicher(nd, cfg)
+        page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+        print(f"\n  {len(page)} bytes written to {OUTPUT / 'index.html'}")
+        check(f'<html lang={args.language}' in page,
+              f"the page declares itself as lang={args.language}")
+        check_page(page, args.case, nd, args.language)
+        check_translation(nd)
+        check_classes(page, nd, args.case)
+        check_status(args.case)
+        check_write_thrift(nd, cfg)
+        check_tor_notice(nd, cfg)
+        if args.case != "leer":
+            check_peers_on_hiccup(nd, cfg)
+        check_denied_methods(nd, cfg)
+        check_tolerance(nd, cfg)
+        if args.case == "synchron":
+            check_cache(nd, cfg)
     finally:
-        attrappe.terminate()
-        attrappe.wait(timeout=5)
+        mock.terminate()
+        mock.wait(timeout=5)
 
     print()
-    if fehler_gesamt:
-        print(f"=== {len(fehler_gesamt)} Pruefung(en) gescheitert ===")
-        for f in fehler_gesamt:
+    if failures:
+        print(f"=== {len(failures)} check(s) failed ===")
+        for f in failures:
             print(f"    {f}")
         return 1
-    print("=== alles bestanden ===")
+    print("=== all checks passed ===")
     return 0
 
 
