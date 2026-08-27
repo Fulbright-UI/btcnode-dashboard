@@ -25,6 +25,7 @@ Usage:
 """
 
 import argparse
+import ast
 import importlib.util
 import json
 import math
@@ -48,6 +49,12 @@ PORT = 18332
 # turns up unescaped anywhere on the page, a foreign node can write markup
 # into the dashboard.
 POISON = "<b>Knoten</b>"
+
+# How many peers the mock delivers. Four checks count against it. It stands
+# here as one name because the mock is meant to grow: a network type that
+# turns up on the Pi belongs in the mock, and then nobody should have to hunt
+# down four magic numbers.
+MOCK_PEERS = 22
 
 failures = []
 
@@ -125,6 +132,26 @@ def replace_system_parts(nd, case):
         nd.TEMP_HISTORY.append(
             (now - (90 - i) * nd.TEMP_STEP, 56 + 13 * (i / 89) + 1.6 * math.sin(i / 3))
         )
+
+    # And a progress history, so that rate and remaining time actually get a
+    # value. Without it 'tempo' stays None, the test took the else branch, and
+    # the branch that runs on the Pi for days on end was never executed once.
+    # It contained a NameError: build_state_bar read 'restzeit' where the
+    # assignment says 'eta' — left over from the rename to English. one_pass
+    # died on it every cycle, main() swallowed the exception, and the page
+    # simply stopped being written. It froze on screen while the log kept
+    # scrolling underneath.
+    if case == "sync":
+        # The series has to end BELOW the value the mock reports (0.0459),
+        # otherwise the growth is zero, estimate_remaining bails out and the
+        # branch stays unvisited — which is how the bug survived in the first
+        # place. And every sample must be at least PROGRESS_MIN_GAP old, or
+        # there is no base point to measure against.
+        for i in range(20):
+            value = 0.04500 + 0.00085 * (i / 19)
+            nd.PROGRESS.append((now - (21 - i) * nd.PROGRESS_MIN_GAP, value))
+            nd.PROGRESS_LONG.append(
+                (now - (21 - i) * nd.PROGRESS_LONG_STEP, value))
 
 
 def write_config(language="de"):
@@ -232,17 +259,64 @@ def check_translation(nd):
     """
     print("\n  Translation completeness")
     source = (PROJECT / "node-dashboard.py").read_text(encoding="utf-8")
-    a = source.index("DE = {")
-    b = source.index("\n}\n", a)
-    table, leftovers = source[a:b], source[:a] + source[b:]
 
-    # Real t() calls only, not .get(" or dict(" — hence the boundary before
-    # the t.
-    calls = set(re.findall(r'(?<![\w.])t\(\s*("(?:[^"\\]|\\.)*")', leftovers))
-    missing = sorted(a[1:-1] for a in calls if a[1:-1] not in table)
+    # Parsed, not matched with a regular expression. The earlier version read
+    # only single-line t("…") calls, and the string that actually broke ran
+    # over four lines: the DE key said {alter} while the call said {age}, so
+    # the lookup missed and the German page carried an English sentence with a
+    # German time in it. A regex could not see it; the parser joins implicitly
+    # concatenated parts by itself.
+    calls = {}
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name) and node.func.id == "t"):
+            continue
+        if not node.args:
+            continue
+        first = node.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            calls[first.value] = node.lineno
+
+    missing = sorted((line, s) for s, line in calls.items()
+                     if s not in nd.DE and s.split("|", 1)[0] not in nd.DE)
     check(not missing,
-          f"all {len(calls)} single-line t() strings are in DE",
-          " | ".join(f[:40] for f in missing[:4]))
+          f"all {len(calls)} t() source strings are in DE",
+          " | ".join(f"line {ln}: {s[:34]}" for ln, s in missing[:3]))
+
+    # And the placeholders of every call must exist in the German text, or
+    # str.format raises a KeyError in the middle of building the page.
+    broken = []
+    for source_text, line in calls.items():
+        german = nd.DE.get(source_text) or nd.DE.get(source_text.split("|", 1)[0])
+        if german is None:
+            continue
+        if set(re.findall(r"\{(\w+)\}", source_text)) != set(
+                re.findall(r"\{(\w+)\}", german)):
+            broken.append(f"line {line}")
+    check(not broken, "call and German text use the same placeholders",
+          " | ".join(broken[:4]))
+
+    # The third direction, and the one that actually bites: the keyword
+    # arguments handed to t() must match the placeholders in the string. If
+    # they do not, str.format raises a KeyError and the whole page fails to
+    # build — not a wrong word somewhere, a blank screen. Only a call that
+    # really runs would show it, and the error case does not run every day.
+    mismatched = []
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name) and node.func.id == "t"):
+            continue
+        if not (node.args and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)):
+            continue
+        given = {kw.arg for kw in node.keywords if kw.arg}
+        wanted = set(re.findall(r"\{(\w+)\}", node.args[0].value))
+        if given != wanted:
+            mismatched.append(
+                f"line {node.lineno}: given {sorted(given) or '-'}, "
+                f"string wants {sorted(wanted) or '-'}")
+    check(not mismatched, f"every t() call passes exactly its placeholders",
+          " | ".join(mismatched[:3]))
 
     # And the other direction: placeholders must be named the same on both
     # sides, otherwise str.format raises a KeyError in mid-operation.
@@ -290,6 +364,117 @@ def check_classes(page, nd, case="synchron"):
         idents.append("peerdetail")
     for ident in idents:
         check(f"id={ident}" in page, f"id '{ident}' present in the markup")
+
+
+def check_names(nd):
+    """Find names that are read but never assigned — before they are executed.
+
+    Python does not notice this until the line actually runs. On 2026-08-24
+    build_state_bar read 'restzeit' where the assignment says 'eta', a leftover
+    from the rename to English. The line only runs during the initial sync and
+    only once a rate has been measured, so it never ran in a test — but on the
+    Pi it ran every thirty seconds. one_pass died on it, main() swallowed the
+    exception ("the service must never die"), and the page silently stopped
+    being written. It froze on screen for hours while the log scrolled on
+    underneath, and the frozen state happened to say "not reachable".
+
+    A test that executes a branch finds this. A test that reads the syntax tree
+    finds it in every branch, including the ones nobody thought to trigger.
+    """
+    print("\n  Undefined names")
+    source = (PROJECT / "node-dashboard.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    # Everything reachable without a local assignment: module level, imports,
+    # builtins.
+    module_level = set(dir(__builtins__)) | set(vars(__builtins__))
+    for node in tree.body:
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
+                module_level.add(sub.id)
+            elif isinstance(sub, (ast.Import, ast.ImportFrom)):
+                for alias in sub.names:
+                    module_level.add((alias.asname or alias.name).split(".")[0])
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            module_level.add(node.name)
+
+    unknown = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        local = set()
+        for sub in ast.walk(fn):
+            if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
+                local.add(sub.id)
+            elif isinstance(sub, ast.arg):
+                local.add(sub.arg)
+            elif isinstance(sub, (ast.FunctionDef, ast.Lambda)):
+                for a in getattr(sub.args, "args", []):
+                    local.add(a.arg)
+            elif isinstance(sub, ast.ExceptHandler) and sub.name:
+                local.add(sub.name)
+            elif isinstance(sub, (ast.Import, ast.ImportFrom)):
+                for alias in sub.names:
+                    local.add((alias.asname or alias.name).split(".")[0])
+            elif isinstance(sub, (ast.comprehension,)):
+                for t_ in ast.walk(sub.target):
+                    if isinstance(t_, ast.Name):
+                        local.add(t_.id)
+        for sub in ast.walk(fn):
+            if (isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load)
+                    and sub.id not in local and sub.id not in module_level):
+                unknown.append(f"{fn.name}() line {sub.lineno}: {sub.id}")
+
+    check(not unknown, f"no undefined name in {sum(1 for _ in ast.walk(tree) if isinstance(_, ast.FunctionDef))} functions",
+          " | ".join(sorted(set(unknown))[:4]))
+
+
+def check_numbers(page, case, language="de"):
+    """The figures on the page must be the figures the mock sent.
+
+    This is the check that was missing. Until 2026-08-24 the tests confirmed
+    that a page was built, that it was well formed, that every card sat in the
+    right zone — and not one of them looked at whether a single number was
+    right. Two reads had been renamed from Core's field names to German ones
+    (blocks -> bloecke, headers -> kopfzeilen), both quietly returned 0, and
+    the page reported block height 0, a reward of 50 BTC and the next halving
+    at 210,000. All green.
+
+    Numbers are the whole point of this page. If they are wrong, nothing else
+    about it matters.
+    """
+    print("\n  Figures against the mock")
+    sep = "." if language == "de" else ","
+
+    def grouped(n):
+        return f"{n:,}".replace(",", sep)
+
+    expected = {
+        "synchron": {"blocks": 915312, "connections": 10, "mempool": 41233},
+        "sync":     {"blocks": 350328, "headers": 963634, "connections": 10},
+        "leer":     {},
+    }[case]
+
+    plain = re.sub(r"<[^>]+>", " ", page)
+    plain = plain.replace("&nbsp;", " ").replace("&amp;", "&")
+
+    for name, value in expected.items():
+        check(grouped(value) in plain,
+              f"{name} = {grouped(value)} appears on the page",
+              f"mock sent {value}")
+
+    # The block reward follows from the height and is the value that exposed
+    # the bug: at the genesis block it is 50 BTC, and that is exactly what a
+    # failed read produces.
+    if case in ("synchron", "sync"):
+        tip = expected.get("headers", expected["blocks"])
+        halvings = tip // 210000
+        reward = f"{50 / (2 ** halvings):.3f}".replace(".", "," if language == "de" else ".")
+        check(reward in plain,
+              f"block reward {reward} BTC matches height {tip}",
+              "50,000 BTC would mean the height was read as 0")
+        check("50,000 BTC" not in plain and "50.000 BTC" not in plain,
+              "no genesis reward on the page")
 
 
 def check_page(page, case, nd=None, language="de"):
@@ -491,7 +676,8 @@ def check_page(page, case, nd=None, language="de"):
     else:
         dots = re.findall(r'<g class="peer [\w ]+" tabindex="0" data-nr="(\d+)"',
                             page)
-        check(len(dots) == 19, f"one row per peer ({len(dots)} of 19)")
+        check(len(dots) == MOCK_PEERS,
+              f"one row per peer ({len(dots)} of {MOCK_PEERS})")
         check([int(n) for n in dots] == list(range(len(dots))),
               "the rows are numbered consecutively")
         check("id=peerdetail" in page, "detail box is present")
@@ -508,7 +694,8 @@ def check_page(page, case, nd=None, language="de"):
                             r'[^>]*class="peerzeile"', page)
         left = [x for x, a in lines if a == "end"]
         right = [x for x, a in lines if a == "start"]
-        check(len(left) == 10 and len(right) == 9,
+        check(len(left) == (MOCK_PEERS + 1) // 2
+              and len(right) == MOCK_PEERS // 2,
               f"split over both sides ({len(left)} left, {len(right)} right)")
         check(all(float(x) < 600 for x in left)
               and all(float(x) > 600 for x in right),
@@ -520,7 +707,7 @@ def check_page(page, case, nd=None, language="de"):
         pairs = re.findall(
             r'<circle cx="[\d.]+" cy="([\d.]+)" r="4\.5"[^>]*/>'
             r'<text x="[\d.]+" y="([\d.]+)"[^>]*class="peerzeile"', page)
-        check(len(pairs) == 19, f"{len(pairs)} dot/text pairs found")
+        check(len(pairs) == MOCK_PEERS, f"{len(pairs)} dot/text pairs found")
         askew = [(p, t) for p, t in pairs if abs(float(p) - float(t)) > 0.01]
         check(not askew, "dot and label sit at the same height",
               " | ".join(f"{p} gegen {t}" for p, t in askew[:3]))
@@ -714,7 +901,7 @@ def check_status(case):
     if case == "leer":
         check(peers == [], "without peers the list stays empty")
     else:
-        check(len(peers) == 19, f"{len(peers)} peers in the list")
+        check(len(peers) == MOCK_PEERS, f"{len(peers)} peers in the list")
         check(any(POISON in p.get("version", "") for p in peers),
               "the foreign identifier is a plain value in the list")
         markup = [z for z in zones.values() if POISON in z]
@@ -741,6 +928,34 @@ def check_status(case):
               (r.stderr or "").strip().split("\n")[0])
     except (OSError, subprocess.SubprocessError):
         print("  [ --  ] dash.js not checked (node not available)")
+
+    # Every field dash.js reads must exist in status.json.
+    #
+    # On 2026-08-23 the mechanical rename turned the key "netzname" into
+    # "network_name" while dash.js went on reading p.netzname. Markup, JSON
+    # and every test here stayed green — and the detail box of the network map
+    # said "undefined · outgoing" on the Pi for four days. It only shows on
+    # hover, so nobody reported it.
+    #
+    # Same class of damage as the CSS rename check_classes was built for, and
+    # the same cure: compare the two sides a rename can move apart.
+    script = (OUTPUT / "dash.js").read_text(encoding="utf-8")
+    # Properties that belong to JavaScript and to the DOM, not to our data.
+    js_own = {"length", "forEach", "map", "filter", "push", "join", "slice",
+              "indexOf", "toFixed", "textContent", "innerHTML", "className",
+              "style", "appendChild", "getAttribute", "setAttribute",
+              "classList", "dataset", "id", "children", "parentNode"}
+
+    def reads(prefix, available, what):
+        used = set(re.findall(prefix + r"\.([A-Za-z_]\w*)", script)) - js_own
+        missing = sorted(used - set(available))
+        check(not missing, f"dash.js reads only existing {what}",
+              " | ".join(missing))
+
+    reads(r"daten", data, "fields of status.json")
+    reads(r"daten\.zonen", zones, "zones")
+    if peers:
+        reads(r"\bp", peers[0], "peer fields")
 
 
 def check_tor_notice(nd, cfg):
@@ -823,6 +1038,42 @@ def check_peers_on_hiccup(nd, cfg):
     finally:
         nd.rpc = real_rpc
         nd.one_pass(cfg)
+
+
+def check_inbound_onion(nd, cfg):
+    """A connection arriving through our own onion service is Tor, not "local".
+
+    Bitcoin Core sees it come in from 127.0.0.1 and files it under
+    'not_publicly_routable'. Calling that "local" in the map hides the one
+    number that says whether the onion service can be reached from outside at
+    all — and with onlynet=onion it cannot be anything else.
+
+    The other half matters just as much: a real second node on the home
+    network carries the same network type, and it has to keep the old label.
+    That is why the address is part of the test, not just the direction.
+    """
+    print("\n  Inbound through the onion service")
+    nd.one_pass(cfg)
+    peers = json.loads(
+        (OUTPUT / "status.json").read_text(encoding="utf-8"))["peers"]
+
+    over_onion = [p for p in peers if p["adresse"].startswith("127.0.0.1")]
+    on_lan = [p for p in peers if p["adresse"].startswith("192.168.")]
+    check(len(over_onion) == 2 and len(on_lan) == 1,
+          "the mock delivers both kinds",
+          f"{len(over_onion)} through the onion service, {len(on_lan)} on the LAN")
+
+    label = nd.t("Tor · inbound")
+    check(all(p["netzart"] == "onion" for p in over_onion),
+          "inbound through the onion service counts as Tor",
+          " | ".join(sorted({p["netzart"] for p in over_onion})))
+    check(all(p["netzname"] == label for p in over_onion),
+          f"and is labelled '{label}'",
+          " | ".join(sorted({p["netzname"] for p in over_onion})))
+    check(all(p["netzart"] == "neutral" and p["netzname"] == nd.t("local")
+              for p in on_lan),
+          "a node on the home network stays local",
+          " | ".join(f'{p["netzart"]}/{p["netzname"]}' for p in on_lan))
 
 
 def check_denied_methods(nd, cfg):
@@ -1006,6 +1257,12 @@ def main():
             return 1
 
         nd = load_dashboard()
+
+        # Static checks come first: they need no page and still work when the
+        # generator dies. A NameError in one_pass would otherwise abort the
+        # run before its own diagnosis ever printed.
+        check_names(nd)
+
         replace_system_parts(nd, args.case)
         cfg = nd.read_config(write_config(args.language))
         nd.one_pass(cfg)
@@ -1015,6 +1272,7 @@ def main():
         check(f'<html lang={args.language}' in page,
               f"the page declares itself as lang={args.language}")
         check_page(page, args.case, nd, args.language)
+        check_numbers(page, args.case, args.language)
         check_translation(nd)
         check_classes(page, nd, args.case)
         check_status(args.case)
@@ -1022,6 +1280,7 @@ def main():
         check_tor_notice(nd, cfg)
         if args.case != "leer":
             check_peers_on_hiccup(nd, cfg)
+            check_inbound_onion(nd, cfg)
         check_denied_methods(nd, cfg)
         check_tolerance(nd, cfg)
         if args.case == "synchron":

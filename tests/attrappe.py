@@ -103,25 +103,41 @@ def answer(method, params):
     if method == "getpeerinfo":
         if CASE == "leer":
             return []
-        # Deliberately mixed: several network types, one inbound node, one
-        # peer without a latency measurement and an identifier with angle
-        # brackets. The last one checks that foreign text never lands as
-        # markup.
-        kinds = ["onion"] * 6 + ["ipv4"] * 9 + ["ipv6"] * 3 + ["i2p"]
+        # Deliberately mixed: several network types, inbound as well as
+        # outbound nodes, one peer without a latency measurement and an
+        # identifier with angle brackets. The last one checks that foreign
+        # text never lands as markup.
+        #
+        # The three 'nprt' entries are what the Pi really looks like since the
+        # Tor conversion. Bitcoin Core reports every connection that arrives
+        # through our own onion service as 'not_publicly_routable' from
+        # 127.0.0.1 — it cannot see the true origin. A second node on the home
+        # network carries the same network type but a 192.168.… address, and
+        # the dashboard has to keep those two apart. A mock in which every
+        # inbound peer carries a proper address cannot check that.
+        kinds = (["onion"] * 6 + ["ipv4"] * 9 + ["ipv6"] * 3 + ["i2p"]
+                 + ["nprt"] * 3)
         nodes = []
         for i, kind in enumerate(kinds):
+            local = kind == "nprt"
             if kind == "onion":
                 addr = f"{'abcdefghij' * 5}{i:02d}xyzw.onion:8333"
             elif kind == "ipv6":
                 addr = f"[2a01:4f8:{i:04x}::{i:x}]:8333"
             elif kind == "i2p":
                 addr = f"{'q' * 52}.b32.i2p:0"
+            elif local:
+                # Two through the onion service, one genuinely on the LAN.
+                addr = (f"192.168.1.{40 + i}:8333" if i == len(kinds) - 1
+                        else f"127.0.0.1:{53_200 + i}")
             else:
                 addr = f"185.{20 + i}.{100 + i}.{i + 3}:8333"
             nodes.append({
                 "addr": addr,
-                "network": kind,
-                "inbound": i == 4,
+                "network": "not_publicly_routable" if local else kind,
+                # Inbound in both flavours: one in the clear, as it looks
+                # while port 8333 is still open, and the onion ones.
+                "inbound": i == 8 or local,
                 # Both in decimal seconds, exactly as Bitcoin Core delivers
                 # them. During the sync 'pingtime' is orders of magnitude
                 # above 'minping' because ping and pong run in the same

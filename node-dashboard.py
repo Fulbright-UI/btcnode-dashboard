@@ -29,7 +29,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "3.1"
+VERSION = "3.2"
 
 # ================================================================= Language ==
 # English is the source language: the code carries the English text, the table
@@ -193,6 +193,7 @@ DE = {
     "unknown": "unbekannt",
     "none": "keine",
     "local": "lokal",
+    "Tor · inbound": "Tor · eingehend",
     "Connected": "Verbunden",
     "Average round trip": "Laufzeit im Mittel",
     "fastest": "schnellster",
@@ -275,14 +276,24 @@ DE = {
         "<b>Noch keine Antwort vom Node.</b> Diese Anzeige wurde eben erst "
         "gestartet und wartet auf die erste Auskunft. Während der "
         "Erstsynchronisation kann das eine Minute dauern.",
+    # Der Platzhalter heisst {age}, nicht {alter} — er muss zum Aufruf in
+    # build_trouble passen, nicht zur deutschen Fassung. Am 24.08.2026 stand
+    # hier {alter}: der Schluessel traf die Quellzeichenkette nicht mehr, die
+    # Suche lief ins Leere und auf der deutschen Seite stand ein englischer
+    # Satz mit deutschem Zeitwert darin ("from vor 55 s").
     "<b>The node is not answering right now.</b> Shown is the last "
-    "measured state from {alter}. During the initial sync this is "
+    "measured state from {age}. During the initial sync this is "
     "normal: Bitcoin Core pauses its query interface while it "
     "writes its cache to disk.":
         "<b>Node antwortet gerade nicht.</b> Angezeigt wird der letzte "
-        "gemessene Stand von {alter}. Während der Erstsynchronisation ist "
+        "gemessene Stand von {age}. Während der Erstsynchronisation ist "
         "das normal: Bitcoin Core hält seine Abfrageschnittstelle an, "
         "solange es den Zwischenspeicher auf die SSD schreibt.",
+    "Bitcoin Core is starting": "Bitcoin Core startet",
+    "<b>Bitcoin Core is starting up.</b> It reports: "
+    "{message} The figures shown are from before the restart.":
+        "<b>Bitcoin Core startet gerade.</b> Es meldet: "
+        "{message} Die gezeigten Zahlen stammen von vor dem Neustart.",
     "Node not reachable": "Node nicht erreichbar",
     "Check with <code>systemctl status bitcoind</code> or "
     "<code>journalctl -u bitcoind -n 50</code>.":
@@ -339,6 +350,16 @@ DE = {
 # screen with a quiet note about their age.
 LAST_STATE = {}          # filled by the last successful pass
 FAILURES_IN_ROW = 0
+
+# Bitcoin Core's error code for "still starting up". It answers with HTTP 500
+# and this code from the first second until the block index is loaded and the
+# last blocks are verified — on a Pi that is regularly several minutes, and
+# after a reindex much longer. It is not a fault and must never be shown as
+# one.
+RPC_IN_WARMUP = -28
+# What the node last said while starting up ("Verifying blocks…"). A list so
+# that one_pass can fill it without a global declaration.
+WARMUP_MESSAGE = [""]
 
 # Methods the node has refused (HTTP 403 because of rpcwhitelist), with the
 # time of the refusal. Without this memory the dashboard would ask again every
@@ -743,7 +764,26 @@ def rpc(cfg, method, params=None):
         if e.code == 403:
             DENIED[method] = time.time()
             raise RpcError(f"HTTP 403 on {method} (not allowed)") from e
-        raise RpcError(f"HTTP {e.code} on {method}") from e
+        # Bitcoin Core answers HTTP 500 while it is still starting up, and the
+        # body says exactly what it is doing: {"error":{"code":-28,"message":
+        # "Verifying blocks…"}}. Throwing the body away turned every restart
+        # into a red "not reachable" card plus a wrong hint about the
+        # rpcwhitelist (2026-08-24, right after the dbcache change). The
+        # message costs one read and is the most useful line on the screen.
+        detail = ""
+        try:
+            body = json.loads(e.read().decode())
+            inner = body.get("error") or {}
+            code, message = inner.get("code"), inner.get("message", "")
+            if code == RPC_IN_WARMUP:
+                raise RpcError(f"Node in warmup on {method}: {message}") from e
+            if message:
+                detail = f" ({message})"
+        except RpcError:
+            raise
+        except (ValueError, OSError, AttributeError):
+            pass
+        raise RpcError(f"HTTP {e.code} on {method}{detail}") from e
     except (urllib.error.URLError, OSError) as e:
         raise RpcError(f"Node not reachable: {e}") from e
     except json.JSONDecodeError as e:
@@ -1026,8 +1066,14 @@ def collect_node(cfg):
     progress = min(progress, 100.0)
     in_sync = progress >= 99.999 and not chain.get("initialblockdownload", False)
 
-    blocks = chain.get("bloecke", 0)
-    headers = chain.get("kopfzeilen", 0)
+    # "blocks" and "headers" are Bitcoin Core's field names and must stay
+    # English. On 2026-08-23 the rename to English ran over these two strings
+    # as well, so both reads missed and returned 0. The page then showed block
+    # height 0, a block reward of 50 BTC and the next halving at 210,000 —
+    # numbers from the genesis block, presented as measurements. Nothing
+    # crashed, and the mock answers correctly, so no test noticed.
+    blocks = chain.get("blocks", 0)
+    headers = chain.get("headers", 0)
     behind = max(0, headers - blocks)
 
     # 'Blockchain' is no longer a card of its own. The figures live in the
@@ -1244,6 +1290,19 @@ def network_name(kind):
             "i2p": "I2P", "cjdns": "CJDNS"}.get(kind, kind)
 
 
+def peer_network_label(p):
+    """Network type of a single peer, with the direction where it matters.
+
+    An inbound Tor peer carries no address of its own — it arrived through our
+    onion service and shows up as 127.0.0.1. "Tor" alone next to that address
+    reads like a contradiction; "Tor · inbound" explains it. Outbound peers
+    keep the plain name, the direction is obvious from the onion address.
+    """
+    if p["netz"] == "onion" and p["eingehend"]:
+        return t("Tor · inbound")
+    return network_name(p["netz"])
+
+
 def shorten_address(url):
     """Onion addresses are 62 characters — too long for any label."""
     url = str(url)
@@ -1288,10 +1347,30 @@ def collect_peers(cfg, limit):
         # anything.
         ping = p.get("pingtime")
         better = p.get("minping")
+
+        kind = str(p.get("network", "?"))
+        address = str(p.get("addr", "?"))
+        inbound = bool(p.get("inbound", False))
+        # A connection that arrives through our own onion service reaches
+        # bitcoind from 127.0.0.1. Core cannot see where it really came from
+        # and files it under 'not_publicly_routable' — which the map used to
+        # label "local". That hides the one number that says whether the onion
+        # service is reachable from outside at all, and it is wrong: with
+        # onlynet=onion no inbound connection can be anything but Tor.
+        #
+        # The address is part of the test, not just the direction. A real
+        # second node on the home network is 'not_publicly_routable' too, but
+        # carries a 192.168.… address and stays "local", rightly so.
+        if (kind == "not_publicly_routable" and inbound
+                and address.startswith("127.0.0.1")):
+            kind = "onion"
+
         peers.append({
-            "adresse": str(p.get("addr", "?")),
-            "netz": str(p.get("network", "?")),
-            "eingehend": bool(p.get("eingehend", False)),
+            "adresse": address,
+            "netz": kind,
+            # Left is our own key, right is Core's field. They must not be
+            # the same word — see the note on blocks/headers above.
+            "eingehend": inbound,
             "ping_ms": round(float(better) * 1000, 1) if better else (
                 round(float(ping) * 1000, 1) if ping else None),
             "jetzt_ms": round(float(ping) * 1000, 1) if ping else None,
@@ -1328,7 +1407,7 @@ def format_latency(ms):
 
 def peer_line_text(p):
     """The key figures shown along the line. Short enough for one line."""
-    parts = [shorten_address(p["adresse"]), network_name(p["netz"])]
+    parts = [shorten_address(p["adresse"]), peer_network_label(p)]
     latenz = format_latency(p["ping_ms"])
     if latenz:
         parts.append(latenz)
@@ -2501,6 +2580,8 @@ def assess_state(error, in_sync, groups, stale_for=None, warming_up=False):
     if error:
         return "fehler", t("Not reachable"), t("Bitcoin Core is not answering")
     if warming_up:
+        if WARMUP_MESSAGE[0]:
+            return ("anlauf", t("Bitcoin Core is starting"), WARMUP_MESSAGE[0])
         return ("anlauf", t("Waiting for Bitcoin Core"),
                 t("No answer since this display started"))
     if stale_for is not None:
@@ -2714,7 +2795,7 @@ def build_state_bar(level, word, extra, progress, kz):
                 '<div class=zfuss>'
                 f'<span>{html_escape(tempo)}</span>'
                 f'<span class=zrest>'
-                f'{html_escape(t("about {remaining} left", remaining=restzeit))}</span>'
+                f'{html_escape(t("about {remaining} left", remaining=eta))}</span>'
                 "</div>"
             )
         else:
@@ -2750,6 +2831,17 @@ def build_trouble(error, stale_for, warming_up=False, tor=None):
     leading = build_tor_notice(tor)
 
     if warming_up:
+        # Two different reasons land here. If the node told us what it is doing
+        # ("Verifying blocks…"), that sentence beats anything we could write:
+        # it names the phase and says the wait is expected.
+        if WARMUP_MESSAGE[0]:
+            return leading + (
+                '<div class=veraltet><span class=punkt></span><div>'
+                + t("<b>Bitcoin Core is starting up.</b> It reports: "
+                    "{message} The figures shown are from before the restart.",
+                    message=html_escape(WARMUP_MESSAGE[0]))
+                + "</div></div>"
+            )
         # Right after the service starts there is no previous state for the
         # tolerance window to hold on to. A missing first answer is still no
         # outage — bitcoind is probably writing its cache.
@@ -3057,7 +3149,12 @@ def build_status(cfg, zones, peers, now, stale_for=None, progress=0.0):
     for p in peers or []:
         schlanke_peers.append({
             "adresse": p["adresse"],
-            "network_name": network_name(p["netz"]),
+            # 'netzname', not 'network_name': dash.js reads p.netzname. This
+            # key is data, not an identifier — the rename on 2026-08-23 hit it
+            # anyway and the detail box has been showing "undefined · outgoing"
+            # ever since. Only visible when hovering a dot, which is why nobody
+            # reported it. check_status compares both sides now.
+            "netzname": peer_network_label(p),
             "netzart": p["netz"] if p["netz"] in NETWORK_COLOURS else "neutral",
             "eingehend": p["eingehend"],
             "ping_ms": p["ping_ms"],
@@ -3210,7 +3307,21 @@ def one_pass(cfg):
         })
     except RpcError as e:
         FAILURES_IN_ROW += 1
-        if FAILURES_IN_ROW >= tolerance:
+        # The node says it is starting up. That is not an outage and the
+        # tolerance window must not run out on it: verifying blocks after a
+        # restart can take a quarter of an hour, and counting to three would
+        # put a red card on screen while the log next to it scrolls happily.
+        if "in warmup" in str(e):
+            FAILURES_IN_ROW = 0
+            WARMUP_MESSAGE[0] = str(e).split(": ", 1)[-1].strip()
+            if LAST_STATE.get("gruppen"):
+                progress = LAST_STATE["fortschritt"]
+                in_sync = LAST_STATE["synchron"]
+                groups.extend(LAST_STATE["gruppen"])
+                summary = LAST_STATE["kennzahlen"]
+                peers = LAST_STATE["peers"]
+            warming_up = True
+        elif FAILURES_IN_ROW >= tolerance:
             error = str(e)
         elif LAST_STATE.get("gruppen"):
             # Still inside the tolerance window: keep showing the old state
@@ -3227,6 +3338,8 @@ def one_pass(cfg):
             # exactly what was on screen on 2026-08-23 after every restart of
             # the service, while the node kept running next to it.
             warming_up = True
+    else:
+        WARMUP_MESSAGE[0] = ""
 
     electrum = collect_electrum(cfg)
     if electrum:
