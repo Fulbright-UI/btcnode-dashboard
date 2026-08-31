@@ -1865,10 +1865,19 @@ font-size:15px;line-height:1.5;padding:var(--e5) var(--e4) var(--e6);
    right. The 50rem column width is not arbitrary — a shortened log line is
    about 110 characters and needs exactly that much to stand unbroken. Below
    that the split is not worth it, hence the breakpoint. */
-/* 'stretch': the right column grows as tall as the left one. The log claims
-   whatever the network map leaves over and therefore reaches exactly down to
-   the Electrum card, which sits below both columns. */
-.inhalt{display:grid;grid-template-columns:1fr;gap:var(--e4);
+/* Not one grid over the whole page but TWO rows, each a grid of its own:
+   above the network card next to the state bar, band and charts, below the
+   log next to the card grid. Only that puts the seam between network card
+   and log onto the seam of the left column — a single grid sizes the right
+   column from its own content, and on 2026-08-31 the network card ended
+   19 px above the chart cards next to it.
+   Rows instead of 'subgrid': a subgrid may not carry layout containment
+   (CSS Grid 2, §6), and 'container-type:inline-size' on .links does exactly
+   that — the card columns need it and would lose their container. */
+/* 'stretch': in each row both columns are as tall as the taller one. The
+   log claims whatever the card grid leaves over. */
+.inhalt{display:flex;flex-direction:column;gap:var(--e4)}
+.reihe{display:grid;grid-template-columns:1fr;gap:var(--e4);
 align-items:stretch}
 /* container-type: so the card grid can follow the width of THIS column
    rather than that of the window. The left column is only half as wide as the
@@ -1891,7 +1900,13 @@ container-type:inline-size}
    width in rem — that would be a strip on a 4K screen and half the page on a
    laptop. */
 @media(min-width:80rem){
-.inhalt{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+.reihe{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+/* Whichever of the two blocks in a row is shorter gives way, so that no hole
+   opens between the cards: the charts take the difference when the network
+   card is the taller one (many peers make it grow), and while the chain is
+   still syncing, where there are no charts, the metric band does. */
+#z-weit{flex-grow:1}
+.links:has(#z-weit:empty) #z-band{flex-grow:1}
 
 /* ----------------------------------------------------------- Kopfzeile --- */
 header{display:flex;flex-wrap:wrap;gap:var(--e1) var(--e4);align-items:center;
@@ -2099,12 +2114,18 @@ gap:var(--e4);margin-bottom:var(--e2);flex-wrap:wrap}
 color:var(--sehrleise);font-size:.72rem}
 .netzzahlen b{color:var(--text);font-family:var(--mono);font-weight:600;
 font-variant-numeric:tabular-nums}
-/* The card is as tall as its content. The drawing takes the full width and
-   its height from the aspect ratio of the viewBox — whose width in turn
-   follows the longest label. */
-.netz{display:flex;flex-direction:column;min-width:0}
-#netzkarte{min-width:0}
-.netzkarte{display:block;width:100%;height:auto}
+/* The card fills its half of the row instead of ending wherever its content
+   happens to end: zone, card and drawing box each grow, so the lower edge of
+   the card comes to lie on the lower edge of the block to its left. The
+   drawing itself is never stretched — it keeps the aspect ratio of its
+   viewBox (whose width follows the longest label) and the surplus stays as
+   air between drawing and legend.
+   No 'display:flex' on the drawing box: an <svg> as a flex item does not
+   shrink below its intrinsic width and would push out of a narrow column. */
+.netzzone{display:flex;flex-direction:column;flex-grow:1}
+.netz{display:flex;flex-direction:column;min-width:0;flex-grow:1}
+#netzkarte{min-width:0;flex-grow:1}
+.netzkarte{display:block;width:100%;height:auto;max-height:100%;margin:0 auto}
 /* Fallback while getpeerinfo is not allowed. */
 .netzersatz{grid-template-columns:repeat(auto-fit,minmax(13rem,1fr));
 gap:var(--e1) var(--e5)}
@@ -3088,23 +3109,35 @@ def build_page(cfg, progress, in_sync, groups, error=None,
         # Two columns: everything interpreted on the left, the raw log at
         # full height on the right. On narrow screens the grid collapses back
         # to one column by itself.
-        "<div class=inhalt><div class=links>",
+        # The split runs in TWO rows, not as two columns over the whole page:
+        # the network card stands beside state bar, band and charts, the log
+        # beside the card grid. Each row is a grid of its own, so both of its
+        # blocks end on the same line — that is what puts the seam between
+        # network card and log onto the seam of the left column.
+        "<div class=inhalt><div class=reihe><div class=links>",
         f'<div id=z-zustand>{zones["zustand"]}</div>',
         f'<div id=z-stoerung>{zones["stoerung"]}</div>',
         f'<div class=band id=z-band>{zones["band"]}</div>',
         f'<div class=weit id=z-weit>{zones["weit"]}</div>',
-        f'<div class="raster s{zones["spalten"]}" id=z-raster>{zones["raster"]}</div>',
-        f'<div id=z-voll>{zones["voll"]}</div>',
     ]
 
-    parts.append("</div>")     # Ende der linken Spalte
+    parts.append("</div>")     # Ende der linken Spalte, obere Reihe
 
-    # Right column: the peers on top, the log below. The two share the height
-    # of the left column half and half — that puts their edges on those of the
-    # cards to the left without any fixed height that would stop fitting after
-    # the next rebuild.
+    # Upper row on the right: the peers. The card grows to the height of the
+    # block on its left instead of ending wherever its content happens to end.
     parts.append("<div class=rechts>")
-    parts.append(f'<div id=z-netz>{zones["netz"]}</div>')
+    parts.append(f'<div class=netzzone id=z-netz>{zones["netz"]}</div>')
+    parts.append("</div></div>")   # Ende rechte Spalte, Ende obere Reihe
+
+    # Lower row: the card grid on the left, the log on the right. The log
+    # claims whatever the grid leaves over and therefore ends flush with it.
+    parts.append("<div class=reihe><div class=links>")
+    parts.append(
+        f'<div class="raster s{zones["spalten"]}" id=z-raster>'
+        f'{zones["raster"]}</div>'
+    )
+    parts.append(f'<div id=z-voll>{zones["voll"]}</div>')
+    parts.append("</div><div class=rechts>")
 
     parts.append(
         '<section class="karte protokoll"><div class=kopfzeile>'
@@ -3119,8 +3152,8 @@ def build_page(cfg, progress, in_sync, groups, error=None,
         f"{html_escape(log_text(logs))}</code></pre></div></section>"
     )
 
-    parts.append("</div>")     # Ende der rechten Spalte
-    parts.append("</div>")     # Ende der Zwei-Spalten-Aufteilung
+    parts.append("</div></div>")   # Ende rechte Spalte, Ende untere Reihe
+    parts.append("</div>")         # Ende der Zwei-Spalten-Aufteilung
     parts.append(
         f"<footer>node-dashboard {VERSION} · "
         + html_escape(t("read-only access · data every {n} s, log every {m} s",

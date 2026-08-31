@@ -545,25 +545,61 @@ def check_page(page, case, nd=None, language="de"):
 
     # Split in two: everything interpreted on the left, the raw log on the
     # right. The header sits above and spans both columns.
+    # And the split runs in two rows: network card beside the charts, log
+    # beside the card grid. Only that keeps the lower edge of the network card
+    # on the lower edge of the charts — on 2026-08-31 it sat 19 px above them
+    # because the right column was one single column sized by its own content.
     print("\n  Two-column layout")
-    check(re.search(r"</header>\s*<div class=inhalt><div class=links>", page)
-          is not None,
+    check(re.search(r"</header>\s*<div class=inhalt><div class=reihe>"
+                    r"<div class=links>", page) is not None,
           "header above both columns, then the split")
-    # Split exactly at the column boundary, not at the next best </div> —
+    check(page.count("<div class=reihe>") == 2
+          and page.count("<div class=links>") == 2
+          and page.count("<div class=rechts>") == 2,
+          "two rows, each with a left and a right block",
+          f"reihe={page.count('<div class=reihe>')} "
+          f"links={page.count('<div class=links>')} "
+          f"rechts={page.count('<div class=rechts>')}")
+
+    # Cut exactly at the block boundaries, not at the next best </div> —
     # otherwise the supposedly left part reaches into the right column and
     # every check below is worthless.
-    boundary = page.find("<div class=rechts>")
-    check(boundary > 0, "the right column is its own block")
-    start = page.find("<div class=links>")
-    left_side = page[start:boundary] if boundary > start > 0 else ""
-    right_side = page[boundary:] if boundary > 0 else ""
+    def block(start_tag, end_tag, after=0):
+        a = page.find(start_tag, after)
+        if a < 0:
+            return "", len(page)
+        b = page.find(end_tag, a + len(start_tag))
+        return (page[a:b], b) if b > a else (page[a:], len(page))
 
-    for zone in ("z-zustand", "z-band", "z-weit", "z-raster", "z-voll"):
-        check(zone in left_side, f"'{zone}' sits in the left column")
-    for zone in ("z-netz", "logtext"):
-        check(zone in right_side, f"'{zone}' sits in the right column")
-    check("z-netz" not in left_side and "logtext" not in left_side,
-          "none of it appears twice in the left column")
+    oben_links, pos = block("<div class=reihe>", "<div class=rechts>")
+    oben_rechts, pos = block("<div class=rechts>", "<div class=reihe>", pos)
+    unten_links, pos = block("<div class=reihe>", "<div class=rechts>", pos)
+    unten_rechts = page[pos:]
+
+    for zone in ("z-zustand", "z-band", "z-weit"):
+        check(zone in oben_links, f"'{zone}' sits in the upper left block")
+    for zone in ("z-raster", "z-voll"):
+        check(zone in unten_links, f"'{zone}' sits in the lower left block")
+    check("z-netz" in oben_rechts,
+          "the network card stands beside the charts, in the same row")
+    check("logtext" in unten_rechts,
+          "the log stands beside the card grid, in the same row")
+    check(page.count("z-netz") == 1 and page.count("id=logtext") == 1,
+          "none of it appears twice")
+    # Each row is a grid of its own and stretches both of its blocks to the
+    # same height. Without 'stretch' the two edges drift apart again.
+    style_now = (OUTPUT / "stil.css").read_text(encoding="utf-8")
+    style_now = style_now.replace("\n", "").replace(" ", "")
+    check(".reihe{display:grid;grid-template-columns:1fr;gap:var(--e4);"
+          "align-items:stretch}" in style_now,
+          "each row is a grid that stretches both blocks equally")
+    check(".reihe{grid-template-columns:minmax(0,1fr)minmax(0,1fr)}"
+          in style_now,
+          "and splits in half from 80 rem on")
+    check(".netzzone{display:flex;flex-direction:column;flex-grow:1}"
+          in style_now and ".netz{display:flex;flex-direction:column;"
+          "min-width:0;flex-grow:1}" in style_now,
+          "the network card fills the height of its row")
 
     # The log must not dictate the page height. 150 lines are about 2670 px,
     # the left column about 920 — without a cap the page would be three times
