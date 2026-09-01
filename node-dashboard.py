@@ -2894,12 +2894,13 @@ line-height:1.55;color:var(--leise);white-space:pre;tab-size:4}
    announcement — and nothing else. The first version had the probes in
    green and both oranges at full strength: with a log that is mostly
    blocks and probes, that coloured nearly every line and highlighted
-   none (2026-09-02). The probes keep the class, so the colour can come
-   back with one rule, but they stay grey. */
+   none (2026-09-02). 60/30 was still loud on the Pi; 35/18 is a warm grey
+   that reads when you look for it. The probes keep the class, so the
+   colour can come back with one rule, but they stay grey. */
 .lz.fehler{color:var(--fehler)}
 .lz.warn{color:var(--warn)}
-.lz.spitze{color:color-mix(in srgb,var(--block) 60%,var(--leise))}
-.lz.kopf{color:color-mix(in srgb,var(--block) 30%,var(--leise))}
+.lz.spitze{color:color-mix(in srgb,var(--block) 35%,var(--leise))}
+.lz.kopf{color:color-mix(in srgb,var(--block) 18%,var(--leise))}
 .protokoll pre::-webkit-scrollbar{width:8px;height:8px}
 .protokoll pre::-webkit-scrollbar-thumb{background:var(--randhell);border-radius:9px}
 
