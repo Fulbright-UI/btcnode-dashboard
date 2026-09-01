@@ -2889,14 +2889,17 @@ letter-spacing:0;font-weight:400;margin-left:auto}
 background:var(--vertief);border:1px solid var(--rand);border-radius:8px;
 padding:var(--e2) var(--e3);font-family:var(--mono);font-size:11.5px;
 line-height:1.55;color:var(--leise);white-space:pre;tab-size:4}
-/* Line colours. Only what one looks for in a log: trouble, then blocks
-   (the accepted tip bright, its announcement muted), then the chain-check
-   probes in the same green as their dots. Everything else stays quiet. */
+/* Line colours. Only what one looks for in a log: trouble at full colour,
+   blocks as a tint — the accepted tip a little warmer than its
+   announcement — and nothing else. The first version had the probes in
+   green and both oranges at full strength: with a log that is mostly
+   blocks and probes, that coloured nearly every line and highlighted
+   none (2026-09-02). The probes keep the class, so the colour can come
+   back with one rule, but they stay grey. */
 .lz.fehler{color:var(--fehler)}
 .lz.warn{color:var(--warn)}
-.lz.spitze{color:var(--block)}
-.lz.kopf{color:color-mix(in srgb,var(--block) 55%,var(--leise))}
-.lz.stich{color:var(--akzent)}
+.lz.spitze{color:color-mix(in srgb,var(--block) 60%,var(--leise))}
+.lz.kopf{color:color-mix(in srgb,var(--block) 30%,var(--leise))}
 .protokoll pre::-webkit-scrollbar{width:8px;height:8px}
 .protokoll pre::-webkit-scrollbar-thumb{background:var(--randhell);border-radius:9px}
 
