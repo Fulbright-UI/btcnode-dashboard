@@ -54,7 +54,7 @@ POISON = "<b>Knoten</b>"
 # here as one name because the mock is meant to grow: a network type that
 # turns up on the Pi belongs in the mock, and then nobody should have to hunt
 # down four magic numbers.
-MOCK_PEERS = 22
+MOCK_PEERS = 23
 
 failures = []
 
@@ -100,6 +100,8 @@ def replace_system_parts(nd, case):
     nd.service_running = lambda name: True
     nd.port_open = lambda host, port: True
     nd.own_ip = lambda: "192.168.1.50"
+    # electrs three blocks behind the tip: the bar must not be full.
+    nd.electrs_indexed_height = lambda cfg: 915312 - 3
 
     real_exists = os.path.exists
     nd.os.path.exists = lambda p: True if ".service" in str(p) else real_exists(p)
@@ -1076,6 +1078,83 @@ def check_peers_on_hiccup(nd, cfg):
         nd.one_pass(cfg)
 
 
+def check_block_path(nd, cfg):
+    """The path of the most recent block: one source, several receivers.
+
+    The mock marks peer 3 as the one that delivered the latest block and
+    lets block bytes to every third peer grow with each call. After the
+    second pass the map must show exactly one source and those receivers,
+    and the sentence in the detail box must name the tip height.
+    """
+    print("\n  Block path")
+    nd.one_pass(cfg)
+    nd.one_pass(cfg)
+    page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+    data = json.loads((OUTPUT / "status.json").read_text(encoding="utf-8"))
+
+    sources = len(re.findall(r'class="peer [^"]*\bquelle\b', page))
+    receivers = len(re.findall(r'class="peer [^"]*\bempfaenger\b', page))
+    check(sources == 1, f"exactly one peer delivered the last block ({sources})")
+    check(receivers >= 3, f"{receivers} peers received it from us")
+
+    sentence = data.get("blockweg", "")
+    tip = f"{915312:,}".replace(",", "." if nd.LANGUAGE == "de" else ",")
+    check(tip in sentence, "the sentence names the tip height", sentence)
+    check(sentence and sentence in page,
+          "the same sentence stands in the page")
+
+    # The source is among the mock's receivers too; on the map it wears
+    # its source role, so it is counted here but not lit as a receiver.
+    peers = data["peers"]
+    counted = [p for p in peers if p["bloecke_an"] > 0]
+    check(len(counted) == receivers + 1,
+          f"{len(counted)} peers carry a count of blocks sent")
+    check(any(p["zuletzt_von"] for p in peers),
+          "the time of the last block received is passed on")
+
+
+def check_electrum_index(page, case):
+    """The index bar of the Electrum card, against the mocked height."""
+    print("\n  Electrum index")
+    card = re.search(r'<section class="karte voll">.*?</section>', page, re.S)
+    check(card is not None, "the Electrum card is on the page")
+    if not card:
+        return
+    text = re.sub(r"<[^>]+>", " ", card.group(0))
+    if case == "synchron":
+        check("915.309" in text or "915,309" in text,
+              "the indexed height is shown", text[:200])
+        check('class="balkenfuellung warn"' in card.group(0),
+              "the bar is marked as not yet complete")
+    else:
+        check("balkenfuellung" not in card.group(0),
+              "no bar while the node has no usable height")
+
+
+def check_script_strings(nd):
+    """Every T.xxx that dash.js reads must exist in the strings table.
+
+    On 2026-08-23 the rename turned the key 'antwort' into 'response' while
+    dash.js kept reading T.antwort — the row label in the detail box said
+    "undefined" for nine days. Same class of damage as check_status guards
+    against for the data fields; this is the counterpart for the strings.
+    """
+    print("\n  Script strings")
+    script = nd.script_text()
+    match = re.search(r"var T = (\{.*?\});", script)
+    check(match is not None, "the strings table is embedded in dash.js")
+    if not match:
+        return
+    table = json.loads(match.group(1))
+    used = set(re.findall(r"\bT\.([A-Za-z_]\w*)", script))
+    missing = sorted(used - set(table))
+    check(not missing, f"dash.js reads only existing strings ({len(used)})",
+          " | ".join(missing))
+    unused = sorted(set(table) - used)
+    check(not unused, "every string in the table is read",
+          " | ".join(unused))
+
+
 def check_inbound_onion(nd, cfg):
     """A connection arriving through our own onion service is Tor, not "local".
 
@@ -1093,7 +1172,12 @@ def check_inbound_onion(nd, cfg):
     peers = json.loads(
         (OUTPUT / "status.json").read_text(encoding="utf-8"))["peers"]
 
-    over_onion = [p for p in peers if p["adresse"].startswith("127.0.0.1")]
+    over_onion = [p for p in peers if p["adresse"].startswith("127.0.0.1")
+                  and p["netzart"] != "electrs"]
+    electrs = [p for p in peers if p["netzart"] == "electrs"]
+    check(len(electrs) == 1 and electrs[0]["netzname"] == nd.t("Electrum · local"),
+          "our own electrs is recognised among the inbound local peers",
+          " | ".join(p["netzname"] for p in electrs))
     on_lan = [p for p in peers if p["adresse"].startswith("192.168.")]
     check(len(over_onion) == 2 and len(on_lan) == 1,
           "the mock delivers both kinds",
@@ -1310,6 +1394,8 @@ def main():
         check_page(page, args.case, nd, args.language)
         check_numbers(page, args.case, args.language)
         check_translation(nd)
+        check_script_strings(nd)
+        check_electrum_index(page, args.case)
         check_classes(page, nd, args.case)
         check_status(args.case)
         check_write_thrift(nd, cfg)
@@ -1320,6 +1406,7 @@ def main():
         check_denied_methods(nd, cfg)
         check_tolerance(nd, cfg)
         if args.case == "synchron":
+            check_block_path(nd, cfg)
             check_cache(nd, cfg)
     finally:
         mock.terminate()

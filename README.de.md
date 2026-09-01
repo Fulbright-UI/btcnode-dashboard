@@ -29,15 +29,20 @@ danach; ändern lässt es sich später mit einer Zeile in der Konfiguration.
 - **Verbundene Knoten** als Fächer: der eigene Node in der Mitte, die
   Gegenstellen links und rechts, mit Adresse, Netzart, Latenz und bewegter
   Datenmenge an der Linie. Beim Überfahren kommen Kennung, Dienste und
-  Verbindungsdauer dazu
+  Verbindungsdauer dazu. Der Weg des letzten Blocks ist markiert: orange
+  Speiche zum Lieferanten, aufgehellte Speichen zu den Gegenstellen, die ihn
+  von dir geholt haben. Der eigene Electrum-Server, der wie jede Gegenstelle
+  über P2P andockt, bekommt eine eigene Farbe
 - **Systemzustand** des Rechners: Temperatur mit Stundenverlauf, Auslastung,
   Arbeitsspeicher, Plattenplatz — bei einem Raspberry Pi auch die
   Stromversorgung, weil Unterspannung die häufigste Ursache beschädigter
   Blockchain-Daten ist
+- **Die Gebühr, die man nehmen sollte**: der Median des letzten Blocks, groß
+  im Kopf, darunter zum Vergleich die Schätzung von Core für den nächsten
 - **Mempool und Gebühren**, Blockbelohnung, nächste Halbierung, Schwierigkeit
 - **Volumen und Gebührenverlauf** der letzten 24 Stunden
-- **Electrum-Server**, falls einer läuft, mit den Adressen für die Wallet und
-  einem Kopierknopf daneben
+- **Electrum-Server**, falls einer läuft, mit den Adressen für die Wallet,
+  einem Kopierknopf daneben und einem Balken, wie weit sein Index ist
 - **Protokoll** des Nodes, mitlaufend
 
 Ohne Daten stehen die Karten trotzdem da — mit einem gedämpften Gerüst und
@@ -217,6 +222,7 @@ In `/etc/node-dashboard.conf`, danach `sudo systemctl restart node-dashboard`:
 | `TOLERANCE` | 3 | erfolglose Abfragen, bevor Alarm geschlagen wird |
 | `PEERS_MAX` | 64 | Höchstzahl der Punkte in der Netzkarte |
 | `ELECTRS_PORT` | 50001 | Port des Electrum-Servers, falls einer läuft |
+| `ELECTRS_METRICS` | 127.0.0.1:4224 | Prometheus-Anschluss von electrs; wird für den Index-Balken gelesen, solange er noch nicht bedient |
 
 Die Sprache betrifft mehr als Wörter: Deutsch schreibt `1.234.567,8`, Englisch
 `1,234,567.8` — Punkt und Komma tauschen beide die Rolle. Deshalb geht jede

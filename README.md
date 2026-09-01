@@ -28,14 +28,20 @@ it later in one line of the configuration file.
 - **Sync progress** with rate and estimated time remaining
 - **Connected nodes** as a fan: your own node in the middle, the peers to the
   left and right, with address, network type, latency and data volume on the
-  line. Pointing at a row adds identifier, services and connection time
+  line. Pointing at a row adds identifier, services and connection time.
+  The path of the most recent block is marked: an orange spoke to the peer
+  that delivered it, lit spokes to the peers that fetched it from you. Your
+  own Electrum server, which connects over P2P like any peer, gets its own
+  colour
 - **System state** of the machine: temperature with an hourly curve, load,
   memory, disk space — on a Raspberry Pi also the power supply, because
   undervoltage is the most common cause of corrupted blockchain data
+- **The fee to use**: the median fee of the last block, large at the top,
+  with Core's estimate for the next block underneath for comparison
 - **Mempool and fees**, block reward, next halving, difficulty
 - **Volume and fee history** of the last 24 hours
-- **Electrum server**, if one runs, with the addresses for your wallet and a
-  copy button next to them
+- **Electrum server**, if one runs, with the addresses for your wallet, a
+  copy button next to them and a bar showing how far its index has got
 - **Log** of the node, live
 
 Without data the cards are still there — with a muted skeleton and dashes
@@ -211,6 +217,7 @@ In `/etc/node-dashboard.conf`, then `sudo systemctl restart node-dashboard`:
 | `TOLERANCE` | 3 | unsuccessful calls before the alarm is raised |
 | `PEERS_MAX` | 64 | maximum number of dots in the network map |
 | `ELECTRS_PORT` | 50001 | port of the Electrum server, if one runs |
+| `ELECTRS_METRICS` | 127.0.0.1:4224 | Prometheus endpoint of electrs, read for the index bar while it is not serving yet |
 
 The language affects more than words: German writes `1.234.567,8`, English
 `1,234,567.8` — period and comma swap roles, both of them. Every number on the

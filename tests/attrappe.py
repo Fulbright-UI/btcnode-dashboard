@@ -38,6 +38,11 @@ CASE = "synchron"
 # chance.
 SPREAD = random.Random(20260823)
 
+# How often getpeerinfo has been answered. The block traffic per peer grows
+# with it, so the second pass sees blocks going out — that is what the
+# generator compares between passes.
+PEER_CALLS = [0]
+
 
 def blockstats(height):
     i = height - (TIP - 143)
@@ -74,6 +79,9 @@ def answer(method, params):
                 "initialblockdownload": False, "pruned": False,
                 "size_on_disk": 812_000_000_000,
                 "chain": "main", "difficulty": 1.263e14,
+                # The tip's own timestamp: the generator claims a height for
+                # the last block received only when its arrival fits it.
+                "time": int(time.time()) - 600,
                 "mediantime": int(time.time()) - 900}
 
     if method == "getnetworkinfo":
@@ -117,6 +125,9 @@ def answer(method, params):
         # inbound peer carries a proper address cannot check that.
         kinds = (["onion"] * 6 + ["ipv4"] * 9 + ["ipv6"] * 3 + ["i2p"]
                  + ["nprt"] * 3)
+        PEER_CALLS[0] += 1
+        calls = PEER_CALLS[0]
+        now = int(time.time())
         nodes = []
         for i, kind in enumerate(kinds):
             local = kind == "nprt"
@@ -152,7 +163,30 @@ def answer(method, params):
                                  + (["NETWORK_LIMITED"] if i % 4 == 0 else []),
                 "bytessent": 40_000 + i * 31_000,
                 "bytesrecv": 900_000 + int(4.2e7 * abs(math.sin(i / 2.3))),
+                "id": 100 + i,
+                # Peer 3 delivered the most recent block, a few others older
+                # ones. Every third peer receives block bytes from us, and
+                # the amount grows with each call — from the second call on
+                # the generator sees it as "one more block passed on".
+                "last_block": (now - 40 if i == 3 else
+                               now - 3600 * (1 + i) if i in (0, 5, 9) else 0),
+                "bytessent_per_msg": {
+                    "ping": 32 * calls,
+                    "cmpctblock": (900 * calls if i % 3 == 0 else 0),
+                    "headers": 106 * calls,
+                },
             })
+        # Our own electrs, as Core reports it: inbound from 127.0.0.1, sub
+        # two milliseconds, and it names itself.
+        nodes.append({
+            "addr": "127.0.0.1:41562", "network": "not_publicly_routable",
+            "inbound": True, "minping": 0.00041, "pingtime": 0.0006,
+            "conntime": int(time.time()) - 80_000,
+            "subver": "/electrs:0.11.1/", "servicesnames": [],
+            "bytessent": 205_000_000, "bytesrecv": 1_200_000,
+            "id": 7, "last_block": 0,
+            "bytessent_per_msg": {"block": 204_000_000, "ping": 32 * calls},
+        })
         return nodes
 
     if method == "getblockstats":

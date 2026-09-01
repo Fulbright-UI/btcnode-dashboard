@@ -29,7 +29,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "3.2"
+VERSION = "3.3"
 
 # ================================================================= Language ==
 # English is the source language: the code carries the English text, the table
@@ -97,7 +97,6 @@ DE = {
     "last hour": "letzte Stunde",
     "Temperature history, still measuring": "Temperaturverlauf, wird noch gemessen",
     "Load": "Auslastung",
-    "{last} on {cores} cores": "{last} bei {cores} Kernen",
     "Memory": "Arbeitsspeicher",
     "{used} of {total}": "{used} von {total}",
     "Disk space": "Speicherplatz",
@@ -258,6 +257,26 @@ DE = {
     "bloecke verified · known to the network": "Blöcke geprüft · im Netz",
     "bloecke rueckstand": "Blöcke Rückstand",
     "in the mempool": "im Mempool",
+    "The node that delivered the last block is no longer connected.":
+        "Der Knoten, der den letzten Block lieferte, ist nicht mehr verbunden.",
+    "Block {n} arrived {when} from {peer}": "Block {n} kam {when} von {peer}",
+    "The last block arrived {when} from {peer}":
+        "Der letzte Block kam {when} von {peer}",
+    "block data sent to {n} nodes|dativ": "Blockdaten an {n} Knoten gesendet",
+    "no node has requested it from us": "kein Knoten hat ihn von uns angefordert",
+    "delivered the last block": "lieferte den letzten Block",
+    "Electrum · local": "Electrum · lokal",
+    "complete · block {n}": "vollständig · Block {n}",
+    "{n} of {tip} bloecke · {rest}": "{n} von {tip} Blöcken · {rest}",
+    "{n} bloecke to go": "noch {n} Blöcke",
+    "progress not readable": "Fortschritt nicht lesbar",
+    "Index": "Index",
+    "got it from us": "bekam ihn von uns",
+    "Blocks from here": "Blöcke von hier",
+    "Blocks to here": "Blöcke dorthin",
+    "last {when}": "zuletzt {when}",
+    "median fee in the last block": "Median-Gebühr im letzten Block",
+    "estimate for the next block: {fee}": "Schätzung nächster Block: {fee}",
     "Syncing the blockchain": "Synchronisiert die Blockchain",
     "of {n} bloecke": "von {n} Blöcken",
     "Node in sync, nothing unusual": "Node synchron, keine Auffälligkeiten",
@@ -325,6 +344,7 @@ DE = {
     " d|kurz": " T",
     " h|kurz": " Std",
     " min|kurz": " Min",
+    "{x} ago|kurz": "vor {x}",
 
     # -- Page frame ----------------------------------------------------------
     "newest first · every {n} s": "neueste oben · alle {n} s",
@@ -934,6 +954,44 @@ def read_file(path, standard=None):
         return standard
 
 
+CPU_LAST = None      # (busy, total) jiffies from the previous pass
+
+
+def _cpu_sample():
+    """(busy, total) jiffies from the first line of /proc/stat."""
+    raw = read_file("/proc/stat", "") or ""
+    first = raw.split("\n", 1)[0].split()
+    if len(first) < 5 or first[0] != "cpu":
+        return None
+    values = [int(v) for v in first[1:]]
+    idle = values[3] + (values[4] if len(values) > 4 else 0)
+    return sum(values) - idle, sum(values)
+
+
+def cpu_percent():
+    """CPU use since the previous pass, from the first line of /proc/stat.
+
+    The first call has nothing to compare against and takes a second sample
+    a quarter of a second later — once, at startup. Later calls measure the
+    whole 30-second interval, which is what the page should show anyway.
+    """
+    global CPU_LAST
+    now = _cpu_sample()
+    if now is None:
+        return None
+    if CPU_LAST is None:
+        time.sleep(0.25)
+        CPU_LAST, now = now, _cpu_sample()
+        if now is None:
+            return None
+    busy = now[0] - CPU_LAST[0]
+    total = now[1] - CPU_LAST[1]
+    CPU_LAST = now
+    if total <= 0:
+        return None
+    return min(100.0, 100.0 * busy / total)
+
+
 def service_running(name):
     try:
         r = subprocess.run(
@@ -971,16 +1029,13 @@ def collect_system(cfg):
                        or build_skeleton(t("Temperature history, still measuring")),
                        "grafik"))
 
-    try:
-        load1, _, _ = os.getloadavg()
-        cores = os.cpu_count() or 1
-        fields.append(
-            (t("Load"),
-             t("{last} on {cores} cores", last=decimal_sep(f"{load1:.2f}"), cores=cores),
-             "warn" if load1 > cores * 1.5 else "")
-        )
-    except OSError:
-        pass
+    # CPU use as a percentage, measured between two passes. The load average
+    # shown before ("0.02 on 4 cores") is a queue length, and nobody reading
+    # the page knows what that is — the number needs a unit (2026-09-01).
+    cpu = cpu_percent()
+    if cpu is not None:
+        fields.append((t("Load"), decimal_sep(f"{cpu:.0f} % CPU"),
+                       "warn" if cpu >= 85 else ""))
 
     meminfo = read_file("/proc/meminfo", "") or ""
     total = available = 0
@@ -1169,6 +1224,10 @@ def collect_node(cfg):
     # reliably answers "no data" — three calls for an answer we already know.
     # At twelve seconds per call that is a third of the whole cycle.
     fee_fields = []
+    # Raw estimates in sat/vB, keyed by target — the metrics bar shows the
+    # first one large. Kept apart from the display fields so nobody has to
+    # parse "4,1 sat/vB" back into a number (2026-09-01).
+    fee_rates = {}
     if in_sync:
         for target, label in ((1, "next block"), (6, "in ~1 hour"),
                                   (24, "in ~4 hours")):
@@ -1178,9 +1237,10 @@ def collect_node(cfg):
                 break
             rate = response.get("feerate")
             if rate:
+                fee_rates[target] = float(rate) * 100000
                 fee_fields.append(
                     (t(label),
-                     decimal_sep(f"{float(rate) * 100000:.1f} sat/vB"), "")
+                     decimal_sep(f"{fee_rates[target]:.1f} sat/vB"), "")
                 )
     if not fee_fields:
         fee_fields = [
@@ -1192,6 +1252,11 @@ def collect_node(cfg):
         "blockalter": (time.time() - float(block_time)) if (block_time and in_sync) else None,
         "verbindungen": int(verbindungen),
         "mempool": int(mempool.get("size", 0)),
+        "gebuehren": fee_rates,
+        # The median fee of the most recent block, from getblockstats. This
+        # is what the tile shows large: what actually got in last time, not
+        # what Core guesses for next time (Jakob, 2026-09-01).
+        "median_gebuehr": (BLOCK_DATA[-1][3] if in_sync and BLOCK_DATA else None),
         "rueckstand": behind,
         "belegt": chain.get("size_on_disk", 0),
         "tempo": rate_text,
@@ -1271,6 +1336,7 @@ def collect_node(cfg):
 # Colours per network type. Deliberately only four — the eye cannot tell more
 # apart in small dots anyway.
 NETWORK_COLOURS = {
+    "electrs": "var(--netz-electrs)",
     "ipv4": "var(--netz-ipv4)",
     "ipv6": "var(--netz-ipv6)",
     "onion": "var(--netz-onion)",
@@ -1286,6 +1352,8 @@ def network_name(kind):
     """
     if kind == "not_publicly_routable":
         return t("local")
+    if kind == "electrs":
+        return t("Electrum server")
     return {"ipv4": "IPv4", "ipv6": "IPv6", "onion": "Tor",
             "i2p": "I2P", "cjdns": "CJDNS"}.get(kind, kind)
 
@@ -1300,6 +1368,8 @@ def peer_network_label(p):
     """
     if p["netz"] == "onion" and p["eingehend"]:
         return t("Tor · inbound")
+    if p["netz"] == "electrs":
+        return t("Electrum · local")
     return network_name(p["netz"])
 
 
@@ -1312,6 +1382,100 @@ def shorten_address(url):
 
 
 LAST_PEERS = []
+
+# Which peer handed us each block, and whom we handed it on to. Keyed by
+# Core's peer id, lives only in the running process like every other history.
+#   von      blocks received from this peer, counted since start
+#   von_zeit 'last_block' from getpeerinfo — absolute, so it is known at once
+#   an       blocks sent to this peer, counted since start
+#   an_zeit  when we last saw block bytes go out to it
+# Core does not count blocks per peer; it only reports the time of the last
+# one received and the bytes sent per message type. Both are compared with
+# the previous pass, so a change means "one more" (2026-09-01).
+BLOCK_TRAFFIC = {}
+BLOCK_MESSAGES = ("cmpctblock", "block", "blocktxn")
+
+
+def track_block_traffic(peers):
+    """Update BLOCK_TRAFFIC from the raw peer list and attach the figures."""
+    now = time.time()
+    seen = set()
+    for p in peers:
+        pid = p["id"]
+        seen.add(pid)
+        entry = BLOCK_TRAFFIC.get(pid)
+        if entry is None:
+            entry = BLOCK_TRAFFIC[pid] = {
+                "von": 0, "von_zeit": p["letzter_block"],
+                "an": 0, "an_zeit": None, "_gesendet": p["_blockbytes"]}
+        else:
+            last = p["letzter_block"]
+            if last and (entry["von_zeit"] is None or last > entry["von_zeit"]):
+                entry["von"] += 1
+                entry["von_zeit"] = last
+            if p["_blockbytes"] > entry["_gesendet"]:
+                entry["an"] += 1
+                entry["an_zeit"] = now
+                entry["_gesendet"] = p["_blockbytes"]
+        p["bloecke_von"] = entry["von"]
+        p["zuletzt_von"] = entry["von_zeit"]
+        p["bloecke_an"] = entry["an"]
+        p["zuletzt_an"] = entry["an_zeit"]
+    # Gone peers are dropped: a reconnecting peer gets a new id anyway.
+    for pid in [k for k in BLOCK_TRAFFIC if k not in seen]:
+        del BLOCK_TRAFFIC[pid]
+
+
+def block_path(peers, kz):
+    """Who delivered the most recent block, and who got it from us.
+
+    Returns (source index, receiver indices, height or None). The source is
+    the peer with the newest 'last_block'. The height is only claimed when
+    that block arrived about when the chain tip's timestamp says — if the
+    delivering peer has disconnected since, the newest time left belongs to
+    an older block and must not be labelled with the tip height.
+    """
+    if not peers:
+        return None, [], None
+    known = [(p["zuletzt_von"], i) for i, p in enumerate(peers)
+             if p.get("zuletzt_von")]
+    if not known:
+        return None, [], None
+    arrived, source = max(known)
+    receivers = [i for i, p in enumerate(peers)
+                 if i != source and p.get("zuletzt_an")
+                 and p["zuletzt_an"] >= arrived - 5]
+    height = None
+    age = (kz or {}).get("blockalter")
+    if age is not None and time.time() - arrived <= age + 120:
+        height = (kz or {}).get("bloecke")
+    return source, receivers, height
+
+
+def block_path_text(peers, kz):
+    """The sentence in the detail box while nothing is pointed at."""
+    source, receivers, height = block_path(peers, kz)
+    if not peers:
+        return ""
+    if source is None:
+        return t("The node that delivered the last block is no longer connected.")
+    p = peers[source]
+    when = format_age(time.time() - p["zuletzt_von"])
+    if height:
+        head = t("Block {n} arrived {when} from {peer}", n=format_number(height),
+                 when=when, peer=shorten_address(p["adresse"]))
+    else:
+        head = t("The last block arrived {when} from {peer}",
+                 when=when, peer=shorten_address(p["adresse"]))
+    # "sent block data", not "passed on": only peers that actually asked
+    # for the block (or take compact blocks unasked) show up here. On a Tor
+    # node most peers already have it and request nothing — a small number
+    # is the honest one (2026-09-01).
+    if receivers:
+        tail = t("block data sent to {n} nodes|dativ", n=len(receivers))
+    else:
+        tail = t("no node has requested it from us")
+    return f"{head} · {tail}"
 
 
 def collect_peers(cfg, limit):
@@ -1361,11 +1525,27 @@ def collect_peers(cfg, limit):
         # The address is part of the test, not just the direction. A real
         # second node on the home network is 'not_publicly_routable' too, but
         # carries a 192.168.… address and stays "local", rightly so.
-        if (kind == "not_publicly_routable" and inbound
+        # Our own Electrum server is a peer too: electrs fetches blocks over
+        # P2P (daemon_p2p_addr in its config) and arrives from 127.0.0.1 like
+        # the onion connections — which is what it used to be labelled as.
+        # It says 'electrs' in its user agent; should that ever change, a
+        # round trip under two milliseconds gives it away: nothing coming
+        # through Tor is that fast (2026-09-01).
+        subver = str(p.get("subver", "")).lower()
+        if (inbound and address.startswith("127.0.0.1")
+                and ("electrs" in subver
+                     or (better is not None and float(better) * 1000 < 2))):
+            kind = "electrs"
+        elif (kind == "not_publicly_routable" and inbound
                 and address.startswith("127.0.0.1")):
             kind = "onion"
 
+        last_block = p.get("last_block")
+        per_msg = p.get("bytessent_per_msg") or {}
         peers.append({
+            "id": int(p.get("id", -1)),
+            "letzter_block": int(last_block) if last_block else None,
+            "_blockbytes": sum(int(per_msg.get(m, 0)) for m in BLOCK_MESSAGES),
             "adresse": address,
             "netz": kind,
             # Left is our own key, right is Core's field. They must not be
@@ -1384,9 +1564,10 @@ def collect_peers(cfg, limit):
     # Group by network type first, fastest first within each group. The
     # grouping keeps dots of the same colour together instead of letting them
     # mix.
-    rank = {"onion": 0, "ipv4": 1, "ipv6": 2, "i2p": 3, "cjdns": 4}
+    rank = {"electrs": 0, "onion": 1, "ipv4": 2, "ipv6": 3, "i2p": 4, "cjdns": 5}
     peers.sort(key=lambda e: (rank.get(e["netz"], 9),
                               e["ping_ms"] if e["ping_ms"] is not None else 9e9))
+    track_block_traffic(peers)
     LAST_PEERS = peers[:limit]
     return list(LAST_PEERS)
 
@@ -1469,7 +1650,7 @@ PEER_CHAR_W = 0.63     # width of one character at that font size
 SPOKE = 104            # distance from hub to the inner end of the spoke
 
 
-def build_network_map(peers):
+def build_network_map(peers, kz=None):
     """A fan: our own node in the middle, the peers to the left and right.
 
     No world map — 'getpeerinfo' carries no geodata, and the generator must
@@ -1482,6 +1663,7 @@ def build_network_map(peers):
     """
     if not peers:
         return None
+    source, receivers, _ = block_path(peers, kz)
 
     row_height = 30
     margin_top = 34
@@ -1519,9 +1701,13 @@ def build_network_map(peers):
 
         kind = p["netz"] if p["netz"] in NETWORK_COLOURS else "neutral"
         filled = "" if p["eingehend"] else " voll"
+        # The path of the most recent block: orange spoke to the peer it
+        # came from, lit spoke to every peer we handed it to.
+        role = (" quelle" if i == source else
+                " empfaenger" if i in receivers else "")
 
         parts.append(
-            f'<g class="peer {kind}" tabindex="0" data-nr="{i}">'
+            f'<g class="peer {kind}{role}" tabindex="0" data-nr="{i}">'
             # A large transparent area: the visible parts are thin, the
             # target for the mouse may be generous.
             f'<rect x="{min(x_inner, x_aussen) - 6:.1f}" y="{y - 15:.1f}" '
@@ -1563,7 +1749,10 @@ def peer_summary(peers):
     by_network = {}
     for p in peers:
         by_network[p["netz"]] = by_network.get(p["netz"], 0) + 1
-    pings = [p["ping_ms"] for p in peers if p["ping_ms"] is not None]
+    # Latency figures without our own electrs: its 0 ms would always be the
+    # "fastest" and pull the average down, and it says nothing about the net.
+    pings = [p["ping_ms"] for p in peers
+             if p["ping_ms"] is not None and p["netz"] != "electrs"]
     inbound = sum(1 for p in peers if p["eingehend"])
 
     fields = [(t("Connected"), f"{len(peers)}", ""),
@@ -1577,7 +1766,8 @@ def peer_summary(peers):
 
     # How long our own node takes to answer. During the sync that is
     # seconds — not the peers' fault but a measure of our own load.
-    now = [p["jetzt_ms"] for p in peers if p.get("jetzt_ms") is not None]
+    now = [p["jetzt_ms"] for p in peers
+           if p.get("jetzt_ms") is not None and p["netz"] != "electrs"]
     if now:
         mean = sum(now) / len(now)
         fields.append((t("own response time"), format_latency(mean),
@@ -1695,7 +1885,7 @@ def build_header_info(updates, kz):
             title += t(", fetched in the clear")
 
     return (f'<div class="kopfinfo {level}"'
-            + (f' titel="{html_escape(title)}"' if title else "")
+            + (f' title="{html_escape(title)}"' if title else "")
             + '><span class=kpunkt></span>'
             + f"<span>{html_escape(' · '.join(pieces))}</span></div>")
 
@@ -1775,7 +1965,70 @@ def own_ip():
         return None
 
 
-def collect_electrum(cfg):
+def electrs_indexed_height(cfg):
+    """How far electrs has indexed the chain, or None if unknown.
+
+    Two sources, both on localhost, neither reaching beyond this machine:
+
+    1. While electrs is serving, its Electrum protocol on the RPC port
+       answers 'blockchain.headers.subscribe' with the height of its own
+       index. Exact, and it is the same call every wallet makes first.
+    2. While it is still indexing it does not serve yet, but its Prometheus
+       endpoint (monitoring_addr in config.toml, on by default in 05) is
+       up from the start. The gauge is 'electrs_index_height{type="tip"}'
+       — measured on the Pi on 2026-09-01 with electrs 0.11.1. Should the
+       name differ in another release, any gauge with 'height' in its name
+       is taken as a fallback — better an approximate bar than none.
+    """
+    port = int(cfg.get("ELECTRS_PORT", 50001))
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
+            sock.sendall(b'{"jsonrpc":"2.0","id":0,'
+                         b'"method":"blockchain.headers.subscribe","params":[]}\n')
+            sock.settimeout(5)
+            raw = b""
+            while b"\n" not in raw and len(raw) < 65536:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                raw += chunk
+        answer = json.loads(raw.split(b"\n", 1)[0].decode("utf-8"))
+        height = int(answer["result"]["height"])
+        if height > 0:
+            return height
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+
+    metrics = cfg.get("ELECTRS_METRICS", "127.0.0.1:4224")
+    try:
+        with urllib.request.urlopen(f"http://{metrics}/", timeout=3) as r:
+            text = r.read(500_000).decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return None
+    exact, rough = [], []
+    for row in text.splitlines():
+        if not row or row.startswith("#"):
+            continue
+        match = re.match(r"^([A-Za-z_:][\w:]*)(\{[^}]*\})?\s+([0-9.eE+-]+)", row)
+        if not match:
+            continue
+        name, value = match.group(1), match.group(3)
+        try:
+            number = int(float(value))
+        except ValueError:
+            continue
+        if name == "electrs_index_height":
+            exact.append(number)
+        elif "height" in name:
+            rough.append(number)
+    if exact:
+        return max(exact)
+    if rough:
+        return max(rough)
+    return None
+
+
+def collect_electrum(cfg, tip=None):
     """State of the Electrum server, if one is set up.
 
     It is what attaches a wallet to your own node — BitBoxApp, Sparrow,
@@ -1795,6 +2048,35 @@ def collect_electrum(cfg):
         (t("Responding"), t("yes") if reachable else t("no, still indexing"),
          "gut" if reachable else "warn"),
     ]
+
+    # How far the index has got, against the node's own height. Until the
+    # bar is full the wallet cannot connect — this is the one thing to watch
+    # after setting electrs up or after a long downtime (2026-09-01).
+    indexed = electrs_indexed_height(cfg) if running else None
+    # An index above the node's own height is not a measurement but a
+    # stale or foreign answer — shown as unreadable rather than as 100 %.
+    if indexed and tip and indexed <= tip:
+        behind = max(0, tip - indexed)
+        fraction = min(1.0, indexed / tip) if tip else 0
+        if behind <= 1:
+            fields.append((t("Index"),
+                           t("complete · block {n}", n=format_number(indexed)),
+                           "gut"))
+            fields.append(("", build_bar(1.0), "grafik"))
+        else:
+            # Close to the tip a percentage says "100,0 %" while blocks are
+            # still missing — there the count is the honest figure.
+            rest = (t("{n} bloecke to go", n=format_number(behind))
+                    if fraction >= 0.999
+                    else decimal_sep(f"{fraction * 100:.1f} %"))
+            fields.append((t("Index"),
+                           t("{n} of {tip} bloecke · {rest}",
+                             n=format_number(indexed), tip=format_number(tip),
+                             rest=rest),
+                           "warn"))
+            fields.append(("", build_bar(fraction, "warn"), "grafik"))
+    elif running:
+        fields.append((t("Index"), t("progress not readable"), "leer"))
 
     # --- Connection details for the wallet, to click and copy ---------------
     ip = own_ip()
@@ -1832,6 +2114,11 @@ STYLE = """
 --akzent:#2fd39a;--warn:#f0b23f;--fehler:#f2645f;--info:#5aa2f0;
 /* Network types in the network map */
 --netz-ipv4:#5aa2f0;--netz-ipv6:#9b8cff;--netz-onion:#2fd39a;--netz-i2p:#f0b23f;
+/* The path of the most recent block through the map: Bitcoin orange, used
+   nowhere else so it stays unmistakable */
+--block:#f7931a;
+/* Our own electrs among the peers: a lighter, cooler blue than IPv4 */
+--netz-electrs:#4cc3ff;
 --balken:var(--akzent);
 /* Spacing scale: everything else is a multiple of these */
 --e1:.25rem;--e2:.5rem;--e3:.75rem;--e4:1rem;--e5:1.5rem;--e6:2rem;
@@ -1850,6 +2137,8 @@ STYLE = """
 --text:#101319;--leise:#586074;--sehrleise:#828b9c;
 --akzent:#0d9c6b;--warn:#b8791a;--fehler:#d33f3c;--info:#2b6fd0;
 --netz-ipv4:#2b6fd0;--netz-ipv6:#6a52e0;--netz-onion:#0d9c6b;--netz-i2p:#b8791a;
+--block:#d9780a;
+--netz-electrs:#0e8ed0;
 --schatten:0 1px 2px rgba(16,19,25,.05),0 8px 24px -14px rgba(16,19,25,.22)}}
 
 *{box-sizing:border-box;margin:0;padding:0}
@@ -2147,6 +2436,9 @@ letter-spacing:.09em;text-transform:uppercase}
 .peer.ipv4{color:var(--netz-ipv4)}
 .peer.ipv6{color:var(--netz-ipv6)}
 .peer.onion{color:var(--netz-onion)}
+.peer.electrs{color:var(--netz-electrs)}
+/* No permanently coloured spoke for electrs: tried on 2026-09-01, looked
+   wrong next to the grey fan. Dot and label carry the colour. */
 .peer.i2p,.peer.cjdns{color:var(--netz-i2p)}
 .peerpunkt{stroke:currentColor}
 /* The large transparent area makes pointing easy — the visible parts are
@@ -2159,6 +2451,18 @@ letter-spacing:.09em;text-transform:uppercase}
 stroke-width:1.6}
 .peer:hover .peerflaeche,.peer:focus-visible .peerflaeche,
 .peer[data-aktiv] .peerflaeche{fill:color-mix(in srgb,currentColor 9%,transparent)}
+/* Where the last block came from and where it went. The source spoke is
+   orange and a little wider; the receivers keep their network colour but
+   the spoke is lit as if pointed at, so the fan shows the path at a glance.
+   The dot of the source gets a second ring rather than a fill — filled
+   already means outbound. */
+.peer.quelle .peerlinie{stroke:var(--block);stroke-opacity:1;stroke-width:2}
+.peer.quelle .peerpunkt{stroke:var(--block);stroke-width:2.2;
+filter:drop-shadow(0 0 3px var(--block))}
+.peer.empfaenger .peerlinie{stroke:currentColor;stroke-opacity:.85;
+stroke-width:1.6}
+.netzfarbe.quelle{background:var(--block)}
+.netzfarbe.empfaenger{background:transparent;border:1.5px solid var(--leise)}
 .peerlegende{display:flex;flex-wrap:wrap;gap:var(--e1) var(--e3);
 color:var(--sehrleise);font-size:.68rem;margin-top:var(--e2)}
 .peerlegende span{display:flex;align-items:center;gap:var(--e1)}
@@ -2167,6 +2471,7 @@ background:var(--leise)}
 .netzfarbe.ipv4{background:var(--netz-ipv4)}
 .netzfarbe.ipv6{background:var(--netz-ipv6)}
 .netzfarbe.onion{background:var(--netz-onion)}
+.netzfarbe.electrs{background:var(--netz-electrs)}
 .netzfarbe.i2p,.netzfarbe.cjdns{background:var(--netz-i2p)}
 /* The detail box has a fixed height. Otherwise the layout jumps every time
    you point at a different dot, and that looks cheap. */
@@ -2177,6 +2482,11 @@ border-radius:var(--rad);padding:var(--e3);min-height:4.6rem;
 margin-top:var(--e3);display:flex;flex-wrap:wrap;align-items:center;
 gap:var(--e2) var(--e5)}
 .peerdetail .leer{color:var(--sehrleise);font-size:.76rem;line-height:1.6}
+/* The block sentence is the default content of the box and reads as a
+   statement, not as a hint — hence the normal text colour. */
+.peerdetail .blockweg{color:var(--leise);font-size:.76rem;line-height:1.6;
+flex-basis:100%}
+.peerdetail .blockweg:empty{display:none}
 /* The detail box runs as a line, not in the grid — the baseline row does
    not apply here. */
 .peerdetail dl{display:flex;flex-wrap:wrap;gap:var(--e1) var(--e5);
@@ -2286,6 +2596,8 @@ SCRIPT = r"""
   var logtakt = (Number(wurzel.dataset.logintervall) || 5) * 1000;
   var peers = [];
   var gemerkt = null;          // pinned peer, survives the refresh
+  var blockweg = "";           // sentence about the last block's path
+  var erzeugt = 0;             // when status.json was written, unix seconds
 
   /* Without JS a <meta refresh> reloads the page periodically. With JS that
      would be harmful: it would reload in the middle of pointing at a dot. */
@@ -2335,6 +2647,10 @@ SCRIPT = r"""
     var p = peers[nr];
     kasten.textContent = "";
     if (!p) {
+      var satz = document.createElement("p");
+      satz.className = "blockweg";
+      satz.textContent = blockweg;
+      kasten.appendChild(satz);
       var hinweis = document.createElement("p");
       hinweis.className = "leer";
       hinweis.textContent = T.hinweis;
@@ -2375,7 +2691,20 @@ SCRIPT = r"""
     }
     zeile(dl, T.empfangen, bytes(p.empfangen));
     zeile(dl, T.gesendet, bytes(p.gesendet));
+    /* Blocks in both directions, counted since the generator started. The
+       time is relative to when status.json was written, not to now — the
+       box is rebuilt on every refresh anyway. */
+    zeile(dl, T.bloecke_von, blockzahl(p.bloecke_von, p.zuletzt_von));
+    zeile(dl, T.bloecke_an, blockzahl(p.bloecke_an, p.zuletzt_an));
     kasten.appendChild(dl);
+  }
+
+  function blockzahl(anzahl, zeit) {
+    if (!zeit) { return "—"; }
+    var her = Math.max(0, erzeugt - zeit);
+    var wann = T.zuletzt.replace("{when}", her < 90 ? T.vor.replace("{x}", her + " s")
+      : T.vor.replace("{x}", dauer(her)));
+    return (anzahl ? anzahl + " · " : "") + wann;
   }
 
   function verdrahtePeers() {
@@ -2444,6 +2773,8 @@ SCRIPT = r"""
 
     setzeZone("z-netz", daten.zonen.netz);
     peers = daten.peers || [];
+    blockweg = daten.blockweg || "";
+    erzeugt = daten.erzeugt || 0;
     verdrahtePeers();
   }
 
@@ -2546,13 +2877,27 @@ def script_text():
     interface. An installation has exactly one language anyway.
     """
     strings = {
-        "note": t("Point at a line for identifier, dienste and connection time."),
+        # 'hinweis', not 'note': dash.js reads T.hinweis. Same rename damage
+        # as 'antwort' below — the detail box showed nothing at all while
+        # not pointing, and that looked like an empty box by design.
+        "hinweis": t("Point at a line for identifier, dienste and connection time."),
         "eingehend": t("eingehend|richtung"),
         "ausgehend": t("outbound|richtung"),
         "kennung": t("Identifier"),
         "dienste": t("Services"),
         "verbunden": t("Connected for"),
-        "response": t("Response right now"),
+        # 'antwort', not 'response': dash.js reads T.antwort. The rename of
+        # 2026-08-23 moved this key and the row label in the detail box has
+        # read "undefined" since. check_script_strings compares both sides
+        # now (2026-09-01).
+        "antwort": t("Response right now"),
+        "bloecke_von": t("Blocks from here"),
+        "bloecke_an": t("Blocks to here"),
+        # These two keep their placeholder: the browser fills it in. Passing
+        # the placeholder as its own value is what makes t() leave it alone
+        # — and satisfies the check that every call names its placeholders.
+        "zuletzt": t("last {when}", when="{when}"),
+        "vor": t("{x} ago|kurz", x="{x}"),
         "empfangen": t("Received"),
         "gesendet": t("Sent"),
         # Short forms for durations. German puts a space in front ("3 T"),
@@ -2721,9 +3066,25 @@ def build_metrics_bar(kz, level):
             t("bloecke verified · known to the network"), "", extra, True,
         ))
 
+    fees = kz.get("gebuehren") or {}
+    median = kz.get("median_gebuehr")
     if level == "sync":
         tiles.append((format_number(kz.get("rueckstand", 0)),
                         t("bloecke rueckstand"), "", "", False))
+    elif median is not None:
+        # The fee to enter with a transaction — the one number Jakob wants
+        # without looking for it. It took the mempool tile's place on
+        # 2026-09-01; the count is still in the 'Mempool & fees' card.
+        # Shown large is the median of the last block: half of what got in
+        # paid more, half paid less. Core's own estimate for the next block
+        # goes underneath in small print for comparison.
+        extra = ""
+        if fees.get(1):
+            extra = t("estimate for the next block: {fee}",
+                      fee=decimal_sep(f"{fees[1]:.1f}"))
+        tiles.append((
+            decimal_sep(f"{median:.1f}") + "<span class=kvon>sat/vB</span>",
+            t("median fee in the last block"), "gut", extra, True))
     elif kz.get("mempool") is not None:
         tiles.append((format_number(kz["mempool"]), t("in the mempool"),
                         "", "", False))
@@ -2911,6 +3272,7 @@ def build_trouble(error, stale_for, warming_up=False, tor=None):
 # would be dropped by the Content Security Policy and the dots would stay
 # colourless. See the comment on build_bar.
 LEGEND = (
+    ("electrs", "Electrum"),
     ("onion", "Tor"),
     ("ipv4", "IPv4"),
     ("ipv6", "IPv6"),
@@ -2935,7 +3297,7 @@ def raster_spalten(count):
     return best
 
 
-def build_network_zone(peers, fallback_fields=None, blocked=False):
+def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None):
     """The whole network card as a finished block: graph, legend, detail box.
 
     Without peer data — 'getpeerinfo' is not allowed until 06-tor.sh has run —
@@ -2943,7 +3305,7 @@ def build_network_zone(peers, fallback_fields=None, blocked=False):
     connection figures would be nowhere to be seen for weeks, ever since the
     'Network' card was dropped.
     """
-    svg = build_network_map(peers)
+    svg = build_network_map(peers, kz)
     if not svg:
         if not fallback_fields:
             return ""
@@ -2982,6 +3344,12 @@ def build_network_zone(peers, fallback_fields=None, blocked=False):
         f'<span><i class="netzfarbe {kind}"></i>{name}</span>'
         for kind, name in LEGEND
     )
+    legend += (
+        '<span><i class="netzfarbe quelle"></i>'
+        f"{html_escape(t('delivered the last block'))}</span>"
+        '<span><i class="netzfarbe empfaenger"></i>'
+        f"{html_escape(t('got it from us'))}</span>"
+    )
 
     return (
         '<section class="karte netz">'
@@ -2993,6 +3361,7 @@ def build_network_zone(peers, fallback_fields=None, blocked=False):
         f"{html_escape(t('filled = outbound'))}</span>"
         "</div>"
         '<div class=peerdetail id=peerdetail>'
+        f"<p class=blockweg>{html_escape(block_path_text(peers, kz))}</p>"
         f"<p class=leer>{html_escape(t('Point at a line for identifier, dienste and connection time.'))}</p>"
         "</div></section>"
     )
@@ -3039,7 +3408,7 @@ def build_zones(cfg, progress, in_sync, groups, error=None,
         "stoerung": build_trouble(error, stale_for, warming_up, tor),
         "band": build_metrics_bar(kz, level),
         "netz": build_network_zone(peers or [], kz.get("netzfelder"),
-                              "getpeerinfo" in DENIED),
+                              "getpeerinfo" in DENIED, kz),
         "spalten": raster_spalten(len(narrow)),
         "raster": "".join(render_card(g) for g in narrow),
         "weit": "".join(render_card(g) for g in wide),
@@ -3098,7 +3467,11 @@ def build_page(cfg, progress, in_sync, groups, error=None,
         f'<meta http-equiv=refresh content="{interval}">',
         f'<link rel=icon href="{favicon}">',
         f'<link rel=stylesheet href="stil.css?v={STYLE_V}">',
-        f"<titel>{html_escape(title)}</titel>",
+        # <title>, not <titel>: the rename of 2026-08-23 hit this tag too.
+        # The browser rendered the unknown element as visible text above the
+        # header for nine days — "Alles läuft · btcnode" in the top left
+        # corner, taken for a design choice (2026-09-01).
+        f"<title>{html_escape(title)}</title>",
         "</head><body><div class=huelle>",
         f'<header><h1><span class=marke></span>{hostname} '
         f"<b>· Bitcoin Fullnode</b></h1>",
@@ -3165,7 +3538,8 @@ def build_page(cfg, progress, in_sync, groups, error=None,
     return "".join(parts)
 
 
-def build_status(cfg, zones, peers, now, stale_for=None, progress=0.0):
+def build_status(cfg, zones, peers, now, stale_for=None, progress=0.0,
+                 summary=None):
     """The static read-only API.
 
     Deliberately not an interface in the usual sense: it is a file the
@@ -3197,6 +3571,10 @@ def build_status(cfg, zones, peers, now, stale_for=None, progress=0.0):
             "dienste": p["dienste"],
             "gesendet": p["gesendet"],
             "empfangen": p["empfangen"],
+            "bloecke_von": p.get("bloecke_von", 0),
+            "zuletzt_von": p.get("zuletzt_von"),
+            "bloecke_an": p.get("bloecke_an", 0),
+            "zuletzt_an": p.get("zuletzt_an"),
         })
 
     return json.dumps({
@@ -3218,6 +3596,9 @@ def build_status(cfg, zones, peers, now, stale_for=None, progress=0.0):
             "voll": zones["voll"],
         },
         "peers": schlanke_peers,
+        # The sentence for the detail box, ready made: dash.js sets it via
+        # textContent and does not rebuild it from the peer list.
+        "blockweg": block_path_text(peers or [], summary or {}),
     }, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -3374,7 +3755,7 @@ def one_pass(cfg):
     else:
         WARMUP_MESSAGE[0] = ""
 
-    electrum = collect_electrum(cfg)
+    electrum = collect_electrum(cfg, (summary or {}).get("bloecke"))
     if electrum:
         groups.append(electrum)
 
@@ -3404,7 +3785,7 @@ def one_pass(cfg):
     write_file_atomic(
         cfg["OUT_DIR"], "status.json",
         build_status(cfg, zones, peers, now,
-                    stale_for if not warming_up else 0.0, progress),
+                    stale_for if not warming_up else 0.0, progress, summary),
     )
     write_log_text(cfg, logs)
     return error
