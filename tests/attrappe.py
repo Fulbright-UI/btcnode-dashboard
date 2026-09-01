@@ -28,7 +28,9 @@ import random
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-USER, PASSWORD = "dashboard", "probe"
+# A password that cannot occur as a word on the page: "probe" did, as part
+# of "Stichproben", and the credential check tripped on it (2026-09-01).
+USER, PASSWORD = "dashboard", "geheim-7f3a"
 
 TIP = 915312
 CASE = "synchron"
@@ -91,9 +93,10 @@ def answer(method, params):
 
     if method == "getmempoolinfo":
         if CASE == "sync":
-            return {"size": 0, "usage": 0, "bytes": 0, "mempoolminfee": 0.00001}
+            return {"size": 0, "usage": 0, "bytes": 0, "maxmempool": 300_000_000,
+                    "mempoolminfee": 0.00001}
         return {"size": 41233, "usage": 198_800_000, "bytes": 61_000_000,
-                "mempoolminfee": 0.0000122}
+                "maxmempool": 300_000_000, "mempoolminfee": 0.0000122}
 
     if method == "getconnectioncount":
         return 10

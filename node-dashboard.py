@@ -67,7 +67,7 @@ def t(text, **values):
     table would have to know every single number.
 
     A vertical bar separates a hint that only serves the table and is dropped
-    in English: t("{n} blocks|dativ"). It is needed because two German forms
+    in English: t("in {n} blocks|dativ"). It is needed because two German forms
     can collapse onto the same English text — "1.234 Blöcke" versus "in 1.234
     Blöcken" are both "1,234 blocks". Without the hint one of the two places
     would have to stay wrongly inflected forever.
@@ -114,13 +114,9 @@ DE = {
     "{n} pp/h": "{n} %-Punkte/Std",
     "Block reward": "Blockbelohnung",
     "Next halving": "Nächste Halbierung",
-    "at {n}": "bei {n}",
     "remaining": "noch",
     "{n} bloecke": "{n} Blöcke",
-    "{n} blocks|dativ": "{n} Blöcken",
-    "around": "etwa",
     "Difficulty": "Schwierigkeit",
-    "next in": "nächste in",
     "last adjustment": "letzte Anpassung",
     "last adjustments": "letzte Anpassungen",
     "Difficulty of the last adjustments": "Schwierigkeit der letzten Anpassungen",
@@ -144,10 +140,15 @@ DE = {
     # These strings double as the identity of a card (see CARDS_WIDE,
     # CARDS_FULL, CARD_ORDER). Change one here and you must change it there
     # too — otherwise the card silently slides into the wrong grid.
-    "Mempool & fees": "Mempool & Gebühren",
     "Volume · 24 hours": "Volumen · 24 Stunden",
     "Fee history · 24 hours": "Gebührenverlauf · 24 Stunden",
-    "Network facts": "Netzwerk-Eckdaten",
+    "Network": "Netzwerk",
+    "Chain": "Kette",
+    "Mempool": "Mempool",
+    "at {n} · {when}": "bei {n} · {when}",
+    "next adjustment": "nächste Anpassung",
+    "in {n} blocks|dativ": "in {n} Blöcken",
+    "fill level": "Füllstand",
     "Electrum server": "Electrum-Server",
     "Connected nodes": "Verbundene Knoten",
     "Log": "Protokoll",
@@ -268,6 +269,13 @@ DE = {
     "no node has requested it from us": "kein Knoten hat ihn von uns angefordert",
     "announced the last block first": "kündigte den letzten Block zuerst an",
     "delivered it": "lieferte ihn",
+    "{ok} of {n} samples confirm block {h}": "{ok} von {n} Stichproben bestätigen Block {h}",
+    "a stranger reports {n} blocks more than we have":
+        "ein Fremder meldet {n} Blöcke mehr als wir",
+    "Chain check: Core asks a random stranger for its height every few minutes. Last {when}":
+        "Kettenabgleich: Core fragt alle paar Minuten einen zufälligen fremden Knoten nach seiner Höhe. Zuletzt {when}",
+    "Chain check: a stranger reports {n} blocks more":
+        "Kettenabgleich: ein Fremder meldet {n} Blöcke mehr",
     "Block {n} · announced {when} by {peer}": "Block {n} · angekündigt {when} von {peer}",
     " · delivered by {peer}": " · geliefert von {peer}",
     "peer {n} (no longer connected)": "Peer {n} (nicht mehr verbunden)",
@@ -1200,11 +1208,16 @@ def collect_node(cfg):
 
     # --- Network facts: halving and difficulty -------------------------------
     reward, next_height, blocks_left, when = halving_facts(headers)
+    # Since 3.3 this is the right-hand column of the 'Network' card, next to
+    # the mempool. Halving on one line — height and month together — so
+    # both columns come out the same height (2026-09-01).
     chain_fields = [
+        (t("Chain"), "", "spalte"),
         (t("Block reward"), decimal_sep(f"{reward:.3f} BTC"), ""),
-        (t("Next halving"), t("at {n}", n=format_number(next_height)), ""),
+        (t("Next halving"),
+         t("at {n} · {when}", n=format_number(next_height),
+           when=when.strftime("%m/%Y")), ""),
         (t("remaining"), t("{n} bloecke", n=format_number(blocks_left)), ""),
-        (t("around"), when.strftime("%m/%Y"), ""),
         (t("Difficulty"), format_magnitude(float(chain.get("difficulty", 0))), ""),
     ]
 
@@ -1212,7 +1225,7 @@ def collect_node(cfg):
     # the header height, not on the history buffer.
     retarget_left = RETARGET_INTERVAL - (headers % RETARGET_INTERVAL)
     chain_fields.append(
-        (t("next in"), t("{n} blocks|dativ", n=format_number(retarget_left)), ""))
+        (t("next adjustment"), t("in {n} blocks|dativ", n=format_number(retarget_left)), ""))
 
     values = [w for _, w in DIFFICULTY]
     if len(values) < 2:
@@ -1245,9 +1258,15 @@ def collect_node(cfg):
         (t("Node up for"), format_duration(laufzeit), ""),
     ]
 
+    usage = int(mempool.get("usage", 0) or 0)
+    max_usage = int(mempool.get("maxmempool", 0) or 0)
     mempool_fields = [
+        (t("Mempool"), "", "spalte"),
         (t("Transactions"), format_number(mempool.get("size", 0)), ""),
-        (t("Memory use"), format_bytes(mempool.get("usage", 0)), ""),
+        (t("Memory use"),
+         (t("{used} of {total}", used=format_bytes(usage), total=format_bytes(max_usage))
+          if max_usage else format_bytes(usage)),
+         ""),
         (t("Minimum fee"),
          decimal_sep(f"{mempool.get('mempoolminfee', 0) * 100000:.1f} sat/vB"), ""),
     ]
@@ -1277,6 +1296,13 @@ def collect_node(cfg):
     if not fee_fields:
         fee_fields = [
             (t("Estimate"), t("not available during sync"), "leer")]
+    # How full the mempool is against maxmempool — once it fills up, the
+    # minimum fee rises and cheap transactions are dropped. Yellow from 80 %.
+    if max_usage:
+        fill = min(1.0, usage / max_usage)
+        fee_fields.append((t("fill level"),
+                           build_bar(fill, "warn" if fill >= 0.8 else ""),
+                           "grafik"))
 
     summary = {
         "bloecke": blocks,
@@ -1355,11 +1381,13 @@ def collect_node(cfg):
 
     # 'Network' is no longer a card of its own either — the connections live
     # in 'Connected nodes', version and uptime in the page header.
+    # One card 'Network' with two inner columns — mempool left, chain right
+    # — instead of two narrow cards. Together with 'System' that makes two
+    # equal cards in the row (2026-09-01).
     groups = [
-        ("Mempool & fees", mempool_fields + fee_fields),
+        ("Network", mempool_fields + fee_fields + chain_fields),
         ("Volume · 24 hours", volume_fields, volume_note),
         ("Fee history · 24 hours", fee_fields_24, fee_note),
-        ("Network facts", chain_fields),
     ]
     return progress, in_sync, groups, summary
 
@@ -1471,6 +1499,18 @@ ANNOUNCE_LINE = re.compile(
 JOURNAL_TIME = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+\-]\d{2}:\d{2})")
 ANNOUNCED_PRIMED = [False]
 
+# Chain check. Besides its regular peers Core opens a short-lived
+# block-relay-only connection every few minutes and asks a stranger for its
+# height — the defence against an eclipse: if the stranger is ahead, the
+# regular peers are holding something back. The line
+#   New block-relay-only peer connected: … blocks=965079 peer=818
+# is that sample. Kept for an hour: (time, peer id, height) (2026-09-01).
+CHAIN_SAMPLES = []
+CHAIN_SAMPLES_KEEP = 3600
+SAMPLE_LINE = re.compile(
+    r"New (?:block-relay-only|outbound-full-relay|feeler) peer connected: "
+    r".*?blocks=(-?\d+) peer=(\d+)")
+
 
 def collect_announcements(cfg):
     """Read the announcement lines and update ANNOUNCED.
@@ -1497,22 +1537,99 @@ def collect_announcements(cfg):
     if r.returncode != 0:
         return
     ANNOUNCED_PRIMED[0] = True
+    seen = {(w, pid) for w, pid, _ in CHAIN_SAMPLES}
     for row in r.stdout.splitlines():
-        match = ANNOUNCE_LINE.search(row)
-        if not match:
-            continue
-        height, peer_id = int(match.group(1)), int(match.group(2))
-        if height in ANNOUNCED:
-            continue
         stamp = JOURNAL_TIME.match(row)
         try:
             when = datetime.fromisoformat(stamp.group(1)).timestamp() if stamp else time.time()
         except ValueError:
             when = time.time()
-        ANNOUNCED[height] = (peer_id, when)
+
+        match = ANNOUNCE_LINE.search(row)
+        if match:
+            height, peer_id = int(match.group(1)), int(match.group(2))
+            if height not in ANNOUNCED:
+                ANNOUNCED[height] = (peer_id, when)
+            continue
+
+        match = SAMPLE_LINE.search(row)
+        if match:
+            height, peer_id = int(match.group(1)), int(match.group(2))
+            if (when, peer_id) not in seen:
+                seen.add((when, peer_id))
+                CHAIN_SAMPLES.append((when, peer_id, height))
     cutoff = time.time() - ANNOUNCED_KEEP
     for h in [h for h, (_, w) in ANNOUNCED.items() if w < cutoff]:
         del ANNOUNCED[h]
+    cutoff = time.time() - CHAIN_SAMPLES_KEEP
+    CHAIN_SAMPLES[:] = sorted(e for e in CHAIN_SAMPLES if e[0] >= cutoff)
+
+
+def own_height_at(when, tip):
+    """Our own height at a past moment, from the announcement history.
+
+    A sample from fifty minutes ago must be compared with what we had
+    then, not with the tip of now — otherwise every stranger from before
+    the last block looks as if it were behind.
+    """
+    known = [h for h, (_, w) in ANNOUNCED.items() if w <= when + 2]
+    if known:
+        return max(known)
+    return tip
+
+
+def chain_check(kz):
+    """Judge the samples of the last hour. Only meaningful once the chain is
+    up to date — during the initial sync every stranger is ahead, rightly,
+    and the callers leave it out.
+
+    Returns (dots, ok, total, ahead) — dots as a list of 'gleich', 'hinten'
+    or 'voraus' in time order, ahead as the largest lead a stranger
+    reported, or 0.
+    """
+    tip = (kz or {}).get("bloecke")
+    if not tip or not CHAIN_SAMPLES:
+        return [], 0, 0, 0
+    dots, ahead = [], 0
+    for when, _, height in CHAIN_SAMPLES:
+        ours = own_height_at(when, tip)
+        if height > ours + 1:
+            dots.append("voraus")
+            ahead = max(ahead, height - ours)
+        elif height < ours - 1:
+            dots.append("hinten")
+        else:
+            dots.append("gleich")
+    ok = sum(1 for d in dots if d == "gleich")
+    return dots, ok, len(dots), ahead
+
+
+def chain_check_markup(kz):
+    """Dots and sentence for the head of the network card."""
+    dots, ok, total, ahead = chain_check(kz)
+    if not total:
+        return ""
+    tip = kz.get("bloecke")
+    last = format_age(time.time() - CHAIN_SAMPLES[-1][0])
+    if ahead:
+        sentence = t("a stranger reports {n} blocks more than we have",
+                     n=ahead)
+        cls = " warn"
+    else:
+        sentence = t("{ok} of {n} samples confirm block {h}",
+                     ok=ok, n=total, h=format_number(tip))
+        cls = ""
+    marks = "".join(f'<i class="stich {d}"></i>' for d in dots[-12:])
+    return (f'<span class="abgleich{cls}" title="{html_escape(t("Chain check: Core asks a random stranger for its height every few minutes. Last {when}", when=last))}">'
+            f"<span class=stiche>{marks}</span>{html_escape(sentence)}</span>")
+
+
+def chain_check_warning(kz):
+    """The warning for the state bar, or None."""
+    _, _, _, ahead = chain_check(kz)
+    if ahead:
+        return t("Chain check: a stranger reports {n} blocks more", n=ahead)
+    return None
 
 
 def announcer_of_tip(peers, kz):
@@ -2495,7 +2612,7 @@ gap:var(--e3)}
 .weit .minikurve{height:calc(var(--zeile) * 3.2)}
 .weit dd.grafik{min-height:calc(var(--zeile) * 3.6)}
 .karte{background:var(--fl);border:1px solid var(--rand);border-radius:var(--rad);
-padding:var(--e4);display:flex;flex-direction:column}
+padding:var(--e4);display:flex;flex-direction:column;container-type:inline-size}
 .karte h2{font-size:.66rem;text-transform:uppercase;letter-spacing:.12em;
 color:var(--sehrleise);font-weight:600;margin-bottom:var(--e3)}
 /* No row-gap, a fixed minimum row height instead: that keeps every row on
@@ -2513,6 +2630,18 @@ dd.gut{color:var(--akzent)}
 dd.leer{color:var(--sehrleise)}
 dd.grafik{grid-column:1/-1;justify-content:flex-start;
 min-height:calc(var(--zeile) * 2)}
+/* Inner columns of a card: two value lists side by side, each with a small
+   heading, a hairline between them. Below the card's own width threshold
+   they stack. The graph at the foot of each column ends the column, so
+   both come out the same height when the rows match. */
+.spalten{display:grid;grid-template-columns:1fr;gap:var(--e3) var(--e5)}
+@container (min-width:30rem){.spalten{grid-template-columns:1fr 1fr}
+.spalte+.spalte{border-left:1px solid var(--rand);padding-left:var(--e5)}}
+.spalte h3{font-size:.62rem;text-transform:uppercase;letter-spacing:.12em;
+color:var(--sehrleise);font-weight:600;min-height:var(--zeile);
+display:flex;align-items:center;border-bottom:1px solid var(--rand)}
+.spalte dl{flex:1}
+.spalte{display:flex;flex-direction:column;min-width:0}
 dt.grafiklabel{grid-column:1/-1;color:var(--sehrleise);font-size:.65rem;
 text-transform:uppercase;letter-spacing:.09em;align-items:flex-end;
 padding-bottom:var(--e1)}
@@ -2574,6 +2703,15 @@ gap:var(--e4);margin-bottom:var(--e2);flex-wrap:wrap}
 color:var(--sehrleise);font-size:.72rem}
 .netzzahlen b{color:var(--text);font-family:var(--mono);font-weight:600;
 font-variant-numeric:tabular-nums}
+/* Chain check: one dot per sample of the last hour. Green = same height,
+   grey = the stranger is behind, red = the stranger is ahead of us. */
+.abgleich{display:inline-flex;align-items:center;gap:var(--e2)}
+.abgleich.warn{color:var(--fehler)}
+.stiche{display:inline-flex;gap:3px}
+.stich{width:.42rem;height:.42rem;border-radius:99px;display:block}
+.stich.gleich{background:var(--akzent)}
+.stich.hinten{background:var(--randhell)}
+.stich.voraus{background:var(--fehler);box-shadow:0 0 0 2px color-mix(in srgb,var(--fehler) 30%,transparent)}
 /* The card fills its half of the row instead of ending wherever its content
    happens to end: zone, card and drawing box each grow, so the lower edge of
    the card comes to lie on the lower edge of the block to its left. The
@@ -3114,7 +3252,8 @@ def html_escape(text):
 
 
 
-def assess_state(error, in_sync, groups, stale_for=None, warming_up=False):
+def assess_state(error, in_sync, groups, stale_for=None, warming_up=False,
+                 extra_warnings=None):
     """Boil the overall state down to one word.
 
     The warnings are not listed one by one but harvested from the cards: every
@@ -3140,6 +3279,10 @@ def assess_state(error, in_sync, groups, stale_for=None, warming_up=False):
     warnungen = [f"{f[0]}: {f[1]}"
                  for g in groups for f in g[1]
                  if len(f) > 2 and f[2] == "warn"]
+    # Warnings that belong to no card — the chain check lives in the head
+    # of the network map. They come first: a stranger ahead of us is the
+    # one thing here that means the node might be lied to.
+    warnungen = [w for w in (extra_warnings or []) if w] + warnungen
 
     if not in_sync:
         return "sync", None, None
@@ -3161,8 +3304,7 @@ CARDS_FULL = ("Electrum server",)
 # not a design decision. Anything not listed here is appended at the end.
 CARD_ORDER = (
     "System",
-    "Network facts",
-    "Mempool & fees",
+    "Network",
 )
 
 
@@ -3174,10 +3316,18 @@ def render_card(group, extra_class=""):
     if not fields:
         return ""
 
+    # A field of class "spalte" opens an inner column; its label is the
+    # column's small heading. Rows before the first such field would be
+    # lost, so a card either uses columns throughout or not at all.
     rows, copy_fields = [], []
+    columns = []          # [(heading, [row markup])]
     for entry in fields:
         label, value = entry[0], entry[1]
         cls = entry[2] if len(entry) > 2 else ""
+        if cls == "spalte":
+            columns.append((label, []))
+            rows = columns[-1][1]
+            continue
         if cls == "kopier":
             copy_fields.append((label, value))
         elif cls == "grafik":
@@ -3196,7 +3346,13 @@ def render_card(group, extra_class=""):
     # Only here is the title translated: up to this point it is the identity
     # of the card and must be the same string in both languages.
     parts = [f'<section class="{classes}"><h2>{html_escape(t(title))}</h2>']
-    if rows:
+    if columns:
+        parts.append('<div class=spalten>')
+        for heading, column_rows in columns:
+            parts.append(f"<div class=spalte><h3>{html_escape(heading)}</h3>"
+                         f"<dl>{''.join(column_rows)}</dl></div>")
+        parts.append("</div>")
+    elif rows:
         parts.append("<dl>" + "".join(rows) + "</dl>")
     if copy_fields:
         parts.append("<div class=kopierblock>")
@@ -3479,7 +3635,8 @@ def raster_spalten(count):
     return best
 
 
-def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None):
+def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None,
+                       in_sync=True):
     """The whole network card as a finished block: graph, legend, detail box.
 
     Without peer data — 'getpeerinfo' is not allowed until 06-tor.sh has run —
@@ -3521,7 +3678,7 @@ def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None):
     values = "".join(
         f"<span><b>{html_escape(w)}</b> {html_escape(b)}</span>"
         for b, w, _ in peer_summary(peers)
-    )
+    ) + (chain_check_markup(kz or {}) if in_sync else "")
     legend = "".join(
         f'<span><i class="netzfarbe {kind}"></i>{name}</span>'
         for kind, name in LEGEND
@@ -3576,7 +3733,8 @@ def build_zones(cfg, progress, in_sync, groups, error=None,
     """
     kz = summary or {}
     level, word, extra = assess_state(error, in_sync, groups,
-                                          stale_for, warming_up)
+                                          stale_for, warming_up,
+                                          [chain_check_warning(kz) if in_sync else None])
 
     narrow = [g for g in groups
               if g[1] and g[0] not in CARDS_WIDE and g[0] not in CARDS_FULL]
@@ -3593,7 +3751,7 @@ def build_zones(cfg, progress, in_sync, groups, error=None,
         "stoerung": build_trouble(error, stale_for, warming_up, tor),
         "band": build_metrics_bar(kz, level),
         "netz": build_network_zone(peers or [], kz.get("netzfelder"),
-                              "getpeerinfo" in DENIED, kz),
+                              "getpeerinfo" in DENIED, kz, in_sync),
         "spalten": raster_spalten(len(narrow)),
         "raster": "".join(render_card(g) for g in narrow),
         "weit": "".join(render_card(g) for g in wide),

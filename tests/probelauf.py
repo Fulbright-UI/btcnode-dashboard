@@ -139,6 +139,19 @@ def replace_system_parts(nd, case):
         ts = stamp((59 - i) * 600 + 40)
         ts = ts[:-2] + ":" + ts[-2:]           # +0200 -> +02:00, as journald writes it
         lines.append(announce.format(ts=ts, h=h, p=who))
+    # Chain-check samples of the last hour: eight strangers at our height,
+    # one behind. None ahead — that case is provoked in check_chain_check.
+    sample = ("{ts} btcnode bitcoind[62345]: New block-relay-only peer "
+              "connected: transport: v2, version: 70016, blocks={h} peer={p}")
+    for i in range(9):
+        ago = (9 - i) * 360
+        ts = stamp(ago)
+        ts = ts[:-2] + ":" + ts[-2:]
+        # A stranger reports its tip at that moment — which is our height
+        # at that moment: the tip minus the announcements still to come.
+        ours = 915312 - sum(1 for k in range(60) if (59 - k) * 600 + 40 < ago)
+        lines.append(sample.format(ts=ts, h=ours - (3000 if i == 4 else 0),
+                                   p=800 + i))
     log = "\n".join(lines) + "\n" + log
 
     def run(command, *a, **k):
@@ -189,7 +202,7 @@ def write_config(language="de"):
     path = HERE / "probe.conf"
     path.write_text(
         f"RPC_HOST=127.0.0.1\nRPC_PORT={PORT}\nRPC_USER=dashboard\n"
-        f"RPC_PASSWORD=probe\nOUT_DIR={OUTPUT}\nDATA_DIR={PROJECT}\n"
+        f"RPC_PASSWORD=geheim-7f3a\nOUT_DIR={OUTPUT}\nDATA_DIR={PROJECT}\n"
         "ELECTRS_PORT=50001\nINTERVAL=30\nLOG_SERVICES=bitcoind\n"
         "LOG_LINES=40\nLOG_INTERVAL=5\nTOLERANCE=3\nPEERS_MAX=64\n"
         f"LANGUAGE={language}\n"
@@ -209,7 +222,7 @@ def write_config(language="de"):
 # entry would never show up.
 EXPECTED = {
     "de": {
-        "raster": ["System", "Netzwerk-Eckdaten", "Mempool &amp; Gebühren"],
+        "raster": ["System", "Netzwerk"],
         "netz": "Verbundene Knoten",
         "voll": "Electrum-Server",
         "protokoll": "Protokoll",
@@ -218,11 +231,11 @@ EXPECTED = {
         "warten": "Erscheint, sobald die Kette steht",
         "verbindungen": "Verbindungen",
         "abgefragt": "werden abgefragt",
-        "aufgeloest": ("Blockchain", "Netzwerk", "Aktualisierungen"),
+        "aufgeloest": ("Blockchain", "Aktualisierungen"),
         "decimal_sep": ",",
     },
     "en": {
-        "raster": ["System", "Network facts", "Mempool &amp; fees"],
+        "raster": ["System", "Network"],
         "netz": "Connected nodes",
         "voll": "Electrum server",
         "protokoll": "Log",
@@ -231,7 +244,7 @@ EXPECTED = {
         "warten": "Appears once the chain is up to date",
         "verbindungen": "Connections",
         "abgefragt": "querying peers",
-        "aufgeloest": ("Blockchain", "Network", "Updates"),
+        "aufgeloest": ("Blockchain", "Updates"),
         "decimal_sep": ".",
     },
 }
@@ -888,7 +901,7 @@ def check_page(page, case, nd=None, language="de"):
               " | ".join(leftovers[:6]))
 
     print("\n  Safety")
-    check("rpcpassword" not in page.lower() and "probe" not in page,
+    check("rpcpassword" not in page.lower() and "geheim-7f3a" not in page,
           "no credentials in the page")
     check(POISON not in page,
           "a foreign node identifier does not land as markup in the page")
@@ -1179,6 +1192,36 @@ def check_electrum_index(page, case):
               "no bar while the node has no usable height")
 
 
+def check_chain_check(nd, cfg):
+    """The eclipse defence on the page: samples, dots, and the warning."""
+    print("\n  Chain check")
+    nd.one_pass(cfg)
+    page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+    dots = re.findall(r'class="stich (\w+)"', page)
+    check(dots.count("gleich") == 8 and dots.count("hinten") == 1,
+          f"eight strangers agree, one is behind ({' '.join(dots)})")
+    word = "bestätigen" if nd.LANGUAGE == "de" else "confirm"
+    check(f"8 {'von' if nd.LANGUAGE == 'de' else 'of'} 9" in page and word in page,
+          "the sentence counts the confirmations")
+    lead = "meldet" if nd.LANGUAGE == "de" else "stranger reports"
+    check(lead not in page, "no chain warning while nobody is ahead")
+
+    # A stranger two blocks ahead of us: the map turns red, the state bar
+    # yellow, and the sentence names the lead.
+    nd.CHAIN_SAMPLES.append((time.time(), 999, 915314))
+    try:
+        nd.one_pass(cfg)
+        page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+        check('class="stich voraus"' in page, "a stranger ahead shows as a red dot")
+        check('data-stufe="warn"' in page, "and raises the state bar to a notice")
+        found = re.search(r'class="abgleich warn".*?</span>(.*?)</span>', page, re.S)
+        check(found is not None and "2" in found.group(1),
+              "the sentence names the lead of two blocks")
+    finally:
+        nd.CHAIN_SAMPLES.pop()
+        nd.one_pass(cfg)
+
+
 def check_script_strings(nd):
     """Every T.xxx that dash.js reads must exist in the strings table.
 
@@ -1456,6 +1499,7 @@ def main():
         check_tolerance(nd, cfg)
         if args.case == "synchron":
             check_block_path(nd, cfg)
+            check_chain_check(nd, cfg)
             check_cache(nd, cfg)
     finally:
         mock.terminate()
