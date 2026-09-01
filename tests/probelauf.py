@@ -1211,10 +1211,10 @@ def check_chain_check(nd, cfg):
     dots = re.findall(r'class="stich (\w+)"', page)
     check(dots.count("gleich") == 8 and dots.count("hinten") == 1,
           f"eight strangers agree, one is behind ({' '.join(dots)})")
-    word = "sahen unsere Höhe, 1 hinterher" if nd.LANGUAGE == "de" else "saw our height, 1 behind"
+    word = "bestätigen unsere Höhe, 1 hinterher" if nd.LANGUAGE == "de" else "matched our height, 1 behind"
     check(f"8 {'von' if nd.LANGUAGE == 'de' else 'of'} 9" in page and word in page,
           "the sentence counts agreement and laggards")
-    lead = "meldet" if nd.LANGUAGE == "de" else "stranger reports"
+    lead = "meldet" if nd.LANGUAGE == "de" else "probe reports"
     check(lead not in page, "no chain warning while nobody is ahead")
 
     # A stranger two blocks ahead of us: the map turns red, the state bar

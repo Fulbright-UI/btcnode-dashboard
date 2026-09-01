@@ -268,14 +268,14 @@ DE = {
     "no node has requested it from us": "kein Knoten hat ihn von uns angefordert",
     "announced the last block first": "kündigte den letzten Block zuerst an",
     "delivered it": "lieferte ihn",
-    "{ok} of {n} strangers saw our height, {behind} behind, none ahead · last {when}":
-        "{ok} von {n} Fremden sahen unsere Höhe, {behind} hinterher, keiner voraus · zuletzt {when}",
-    "a stranger reports {n} blocks more than we have":
-        "ein Fremder meldet {n} Blöcke mehr als wir",
-    "Chain check: Core asks a random stranger for its height every few minutes. Last {when}":
-        "Kettenabgleich: Core fragt alle paar Minuten einen zufälligen fremden Knoten nach seiner Höhe. Zuletzt {when}",
-    "Chain check: a stranger reports {n} blocks more":
-        "Kettenabgleich: ein Fremder meldet {n} Blöcke mehr",
+    "{ok} of {n} probes matched our height, {behind} behind, none ahead · last {when}":
+        "{ok} von {n} Stichproben bestätigen unsere Höhe, {behind} hinterher, keine voraus · zuletzt {when}",
+    "a probe reports {n} blocks more than we have":
+        "eine Stichprobe meldet {n} Blöcke mehr als wir",
+    "Chain check: every few minutes Core asks a random node for its height. Last {when}":
+        "Kettenabgleich: Core fragt alle paar Minuten einen zufälligen Knoten nach seiner Höhe. Zuletzt {when}",
+    "Chain check: a probe reports {n} blocks more":
+        "Kettenabgleich: eine Stichprobe meldet {n} Blöcke mehr",
     "Block {n} · announced {when} by {peer}": "Block {n} · angekündigt {when} von {peer}",
     " · delivered by {peer}": " · geliefert von {peer}",
     "peer {n} (no longer connected)": "Peer {n} (nicht mehr verbunden)",
@@ -1646,16 +1646,15 @@ def chain_check_markup(kz):
     # chain as we did — behind is harmless, ahead is the alarm.
     behind = total - ok - sum(1 for d in dots if d == "voraus")
     if ahead:
-        sentence = t("a stranger reports {n} blocks more than we have",
-                     n=ahead)
+        sentence = t("a probe reports {n} blocks more than we have", n=ahead)
         cls = " warn"
     else:
-        sentence = t("{ok} of {n} strangers saw our height, {behind} behind, "
+        sentence = t("{ok} of {n} probes matched our height, {behind} behind, "
                      "none ahead · last {when}",
                      ok=ok, n=total, behind=behind, when=last)
         cls = ""
     marks = "".join(f'<i class="stich {d}"></i>' for d in dots[-12:])
-    return (f'<span class="abgleich{cls}" title="{html_escape(t("Chain check: Core asks a random stranger for its height every few minutes. Last {when}", when=last))}">'
+    return (f'<span class="abgleich{cls}" title="{html_escape(t("Chain check: every few minutes Core asks a random node for its height. Last {when}", when=last))}">'
             f"<span class=stiche>{marks}</span>{html_escape(sentence)}</span>")
 
 
@@ -1663,7 +1662,7 @@ def chain_check_warning(kz):
     """The warning for the state bar, or None."""
     _, _, _, ahead = chain_check(kz)
     if ahead:
-        return t("Chain check: a stranger reports {n} blocks more", n=ahead)
+        return t("Chain check: a probe reports {n} blocks more", n=ahead)
     return None
 
 
