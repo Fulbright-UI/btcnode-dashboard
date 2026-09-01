@@ -1148,7 +1148,7 @@ def check_block_path(nd, cfg):
     announcers = len(re.findall(r'class="peer [^"]*\bansager\b', page))
     receivers = len(re.findall(r'class="peer [^"]*\bempfaenger\b', page))
     check(announcers == 1, f"exactly one peer announced the last block ({announcers})")
-    check(sources == 1, f"exactly one other peer delivered it ({sources})")
+    check(sources == 0, "the deliverer is no longer marked on the map")
     ranking = data.get("rangliste", "")
     check("× 40" in ranking and "999" in ranking,
           "the 24 h ranking counts announcements, gone peers by id", ranking)
@@ -1170,6 +1170,26 @@ def check_block_path(nd, cfg):
           f"{len(counted)} peers carry a count of blocks sent")
     check(any(p["zuletzt_von"] for p in peers),
           "the time of the last block received is passed on")
+
+
+def check_log_colours(page, nd):
+    """Coloured log lines: class from the pattern table, text still escaped.
+
+    The same table goes to dash.js; here the server-side page is checked,
+    and that the JavaScript copy carries the same kinds.
+    """
+    print("\n  Log colours")
+    body = re.search(r"<code id=logtext>(.*?)</code>", page, re.S).group(1)
+    kinds = re.findall(r'<span class="lz (\w+)">', body)
+    check("spitze" in kinds and "stich" in kinds and "kopf" in kinds,
+          "tip, announcement and probe lines carry their class",
+          " ".join(sorted(set(kinds))))
+    check("<b>" not in body and POISON not in body,
+          "log lines stay escaped inside the spans")
+    script = nd.script_text()
+    js_kinds = re.findall(r'\["(\w+)", "', script.split("var MUSTER")[1].split(";")[0])
+    check(js_kinds == [k for k, _ in nd.LOG_KINDS],
+          "dash.js carries the same kinds in the same order", " ".join(js_kinds))
 
 
 def check_power_supply(page):
@@ -1499,6 +1519,7 @@ def main():
         check_script_strings(nd)
         check_electrum_index(page, args.case)
         check_power_supply(page)
+        check_log_colours(page, nd)
         check_classes(page, nd, args.case)
         check_status(args.case)
         check_write_thrift(nd, cfg)

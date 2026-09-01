@@ -267,7 +267,6 @@ DE = {
     "block data sent to {n} nodes|dativ": "Blockdaten an {n} Knoten gesendet",
     "no node has requested it from us": "kein Knoten hat ihn von uns angefordert",
     "announced the last block first": "kündigte den letzten Block zuerst an",
-    "delivered it": "lieferte ihn",
     "{ok} of {n} probes matched our height, {behind} behind, none ahead · last {when}":
         "{ok} von {n} Stichproben bestätigen unsere Höhe, {behind} hinterher, keine voraus · zuletzt {when}",
     "a probe reports {n} blocks more than we have":
@@ -277,7 +276,6 @@ DE = {
     "Chain check: a probe reports {n} blocks more":
         "Kettenabgleich: eine Stichprobe meldet {n} Blöcke mehr",
     "Block {n} · announced {when} by {peer}": "Block {n} · angekündigt {when} von {peer}",
-    " · delivered by {peer}": " · geliefert von {peer}",
     "peer {n} (no longer connected)": "Peer {n} (nicht mehr verbunden)",
     "first to announce, {total} blocks in 24 h: {parts}":
         "zuerst angekündigt, {total} Blöcke in 24 h: {parts}",
@@ -1756,9 +1754,6 @@ def block_path_text(peers, kz):
         when = format_age(time.time() - ann_when)
         head = t("Block {n} · announced {when} by {peer}", n=format_number(height),
                  when=when, peer=ann_name)
-        if source is not None and source != ann_index:
-            head += t(" · delivered by {peer}",
-                      peer=shorten_address(peers[source]["adresse"]))
     else:
         p = peers[source]
         when = format_age(time.time() - p["zuletzt_von"])
@@ -2020,10 +2015,11 @@ def build_network_map(peers, kz=None):
         # a headers announcement Core fetches the block from the announcer,
         # and then there is just the orange one), lit spoke to every peer
         # we handed it to.
+        # The deliverer used to get a spoke of its own; dropped on
+        # 2026-09-02 — who announced first is the interesting peer, who
+        # then handed over the bytes is not.
         if i == announcer:
             role = " ansager"
-        elif i == source:
-            role = " quelle"
         elif i in receivers:
             role = " empfaenger"
         else:
@@ -2804,15 +2800,9 @@ stroke-width:1.6}
 .peer.ansager .peerlinie{stroke:var(--block);stroke-opacity:1;stroke-width:2}
 .peer.ansager .peerpunkt{stroke:var(--block);stroke-width:2.2;
 filter:drop-shadow(0 0 3px var(--block))}
-/* The deliverer, when it is not also the announcer: a solid spoke in the
-   peer's own network colour. Dashed orange was tried first and dropped on
-   2026-09-01 — two oranges read as one thing. */
-.peer.quelle .peerlinie{stroke:currentColor;stroke-opacity:1;stroke-width:2}
-.peer.quelle .peerpunkt{stroke-width:2.2}
 .peer.empfaenger .peerlinie{stroke:currentColor;stroke-opacity:.85;
 stroke-width:1.6}
 .netzfarbe.ansager{background:var(--block)}
-.netzfarbe.quelle{background:var(--leise)}
 .netzfarbe.empfaenger{background:transparent;border:1.5px solid var(--leise)}
 .peerlegende{display:flex;flex-wrap:wrap;gap:var(--e1) var(--e3);
 color:var(--sehrleise);font-size:.68rem;margin-top:var(--e2)}
@@ -2899,6 +2889,14 @@ letter-spacing:0;font-weight:400;margin-left:auto}
 background:var(--vertief);border:1px solid var(--rand);border-radius:8px;
 padding:var(--e2) var(--e3);font-family:var(--mono);font-size:11.5px;
 line-height:1.55;color:var(--leise);white-space:pre;tab-size:4}
+/* Line colours. Only what one looks for in a log: trouble, then blocks
+   (the accepted tip bright, its announcement muted), then the chain-check
+   probes in the same green as their dots. Everything else stays quiet. */
+.lz.fehler{color:var(--fehler)}
+.lz.warn{color:var(--warn)}
+.lz.spitze{color:var(--block)}
+.lz.kopf{color:color-mix(in srgb,var(--block) 55%,var(--leise))}
+.lz.stich{color:var(--akzent)}
 .protokoll pre::-webkit-scrollbar{width:8px;height:8px}
 .protokoll pre::-webkit-scrollbar-thumb{background:var(--randhell);border-radius:9px}
 
@@ -2941,6 +2939,9 @@ SCRIPT = r"""
      new file rather than an old one from the cache. */
   var T = __TEXTE__;
   var KOMMA = __KOMMA__;       /* true = deutsches Dezimalkomma */
+  /* Log line kinds, same table as the generator's. [kind, pattern] */
+  var MUSTER = __MUSTER__.map(function (e) { return [e[0], new RegExp(e[1], e[2])]; });
+  var letztesLog = null;
 
   var wurzel = document.documentElement;
   var takt = (Number(wurzel.dataset.intervall) || 30) * 1000;
@@ -3146,12 +3147,26 @@ SCRIPT = r"""
     if (!kasten) { return; }
     hole("log.txt", true).then(function (text) {
       /* Plain text from a foreign source: Bitcoin Core logs the self-chosen
-         identifiers of other nodes. textContent, always. */
-      if (kasten.textContent !== text) {
-        var oben = kasten.parentNode.scrollTop;
-        kasten.textContent = text;
-        kasten.parentNode.scrollTop = oben;
+         identifiers of other nodes. Each line becomes a span whose text is
+         set via textContent — always — and whose class comes from the
+         pattern table. Nothing in the line can become markup. */
+      if (letztesLog === text) { return; }
+      letztesLog = text;
+      var oben = kasten.parentNode.scrollTop;
+      kasten.textContent = "";
+      var zeilen = text.split("\n");
+      for (var i = 0; i < zeilen.length; i++) {
+        var span = document.createElement("span");
+        var art = "";
+        for (var k = 0; k < MUSTER.length; k++) {
+          if (MUSTER[k][1].test(zeilen[i])) { art = MUSTER[k][0]; break; }
+        }
+        span.className = art ? "lz " + art : "lz";
+        span.textContent = zeilen[i];
+        kasten.appendChild(span);
+        if (i < zeilen.length - 1) { kasten.appendChild(document.createTextNode("\n")); }
       }
+      kasten.parentNode.scrollTop = oben;
     }).catch(function () { });
   }
 
@@ -3265,6 +3280,10 @@ def script_text():
     }
     return (SCRIPT
             .replace("__TEXTE__", json.dumps(strings, ensure_ascii=False))
+            # (?i) is Python's spelling; JavaScript takes the flag apart.
+            .replace("__MUSTER__", json.dumps(
+                [(k, p.replace("(?i)", ""), "i" if p.startswith("(?i)") else "")
+                 for k, p in LOG_KINDS]))
             .replace("__KOMMA__", "true" if LANGUAGE == "de" else "false"))
 
 
@@ -3723,8 +3742,6 @@ def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None,
     legend += (
         '<span><i class="netzfarbe ansager"></i>'
         f"{html_escape(t('announced the last block first'))}</span>"
-        '<span><i class="netzfarbe quelle"></i>'
-        f"{html_escape(t('delivered it'))}</span>"
         '<span><i class="netzfarbe empfaenger"></i>'
         f"{html_escape(t('got it from us'))}</span>"
     )
@@ -3744,6 +3761,38 @@ def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None,
         f"<p class=leer>{html_escape(t('Point at a line for identifier, dienste and connection time.'))}</p>"
         "</div></section>"
     )
+
+
+# Which log lines get a colour. Order matters: the first match wins, so
+# trouble comes before everything else. The patterns are compiled here for
+# the server-side page and handed to dash.js as strings, so both routes
+# colour the same lines (2026-09-02). Colour only — the text of a line is
+# always set as text, never as markup.
+LOG_KINDS = (
+    ("fehler", r"(?i)\berror\b|misbehaving|disconnecting|Potential stale tip|corrupt"),
+    ("warn", r"(?i)\bwarning\b"),
+    ("spitze", r"UpdateTip:"),
+    ("kopf", r"Saw new (?:cmpctblock )?header"),
+    ("stich", r"New block-relay-only peer connected"),
+)
+LOG_KINDS_RE = [(kind, re.compile(pattern)) for kind, pattern in LOG_KINDS]
+
+
+def log_kind(row):
+    for kind, pattern in LOG_KINDS_RE:
+        if pattern.search(row):
+            return kind
+    return ""
+
+
+def log_markup(text):
+    """The log as lines in spans, each escaped, classed by log_kind."""
+    parts = []
+    for row in text.split("\n"):
+        kind = log_kind(row)
+        cls = f' class="lz {kind}"' if kind else ' class=lz'
+        parts.append(f"<span{cls}>{html_escape(row)}</span>")
+    return "\n".join(parts)
 
 
 def log_text(logs):
@@ -3902,7 +3951,7 @@ def build_page(cfg, progress, in_sync, groups, error=None,
         # and the <pre> inside sits absolutely. Only that keeps the length of
         # the log from dictating the height of the page.
         f'<div class=logbox><pre><code id=logtext>'
-        f"{html_escape(log_text(logs))}</code></pre></div></section>"
+        f"{log_markup(log_text(logs))}</code></pre></div></section>"
     )
 
     parts.append("</div></div>")   # Ende rechte Spalte, Ende untere Reihe

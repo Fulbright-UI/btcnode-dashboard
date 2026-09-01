@@ -30,8 +30,7 @@ it later in one line of the configuration file.
   left and right, with address, network type, latency and data volume on the
   line. Pointing at a row adds identifier, services and connection time.
   The path of the most recent block is marked: an orange spoke to the peer
-  that announced it first, a solid one to the peer that delivered it, lit
-  spokes to the peers that fetched it from you — with a 24-hour ranking of
+  that announced it first, lit spokes to the peers that fetched it from you — with a 24-hour ranking of
   who announces first most often. Your own Electrum server, which connects
   over P2P like any peer, gets its own colour
 - **Chain check**: every few minutes Bitcoin Core asks a random node for its
@@ -47,7 +46,10 @@ it later in one line of the configuration file.
 - **Volume and fee history** of the last 24 hours
 - **Electrum server**, if one runs, with the addresses for your wallet, a
   copy button next to them and a bar showing how far its index has got
-- **Log** of the node, live
+- **Log** of the node, live — accepted blocks in orange, their
+  announcements muted, chain-check probes green, errors and warnings red
+  and yellow. The lines stay plain text; only the colour comes from a
+  pattern table
 
 Without data the cards are still there — with a muted skeleton and dashes
 instead of numbers. **Never invented values:** on a display that reports the

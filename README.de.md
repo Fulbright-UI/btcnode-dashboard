@@ -30,9 +30,8 @@ danach; ändern lässt es sich später mit einer Zeile in der Konfiguration.
   Gegenstellen links und rechts, mit Adresse, Netzart, Latenz und bewegter
   Datenmenge an der Linie. Beim Überfahren kommen Kennung, Dienste und
   Verbindungsdauer dazu. Der Weg des letzten Blocks ist markiert: orange
-  Speiche zu dem, der ihn zuerst angekündigt hat, eine durchgezogene zum
-  Lieferanten, aufgehellte Speichen zu den Gegenstellen, die ihn von dir
-  geholt haben — mit einer 24-Stunden-Rangliste, wer am häufigsten zuerst
+  Speiche zu dem, der ihn zuerst angekündigt hat, aufgehellte Speichen zu
+  den Gegenstellen, die ihn von dir geholt haben — mit einer 24-Stunden-Rangliste, wer am häufigsten zuerst
   ankündigt. Der eigene Electrum-Server, der wie jede Gegenstelle über P2P
   andockt, bekommt eine eigene Farbe
 - **Kettenabgleich**: Bitcoin Core fragt alle paar Minuten einen zufälligen
@@ -49,7 +48,10 @@ danach; ändern lässt es sich später mit einer Zeile in der Konfiguration.
 - **Volumen und Gebührenverlauf** der letzten 24 Stunden
 - **Electrum-Server**, falls einer läuft, mit den Adressen für die Wallet,
   einem Kopierknopf daneben und einem Balken, wie weit sein Index ist
-- **Protokoll** des Nodes, mitlaufend
+- **Protokoll** des Nodes, mitlaufend — angenommene Blöcke orange, ihre
+  Ankündigungen gedämpft, Stichproben des Kettenabgleichs grün, Fehler und
+  Warnungen rot und gelb. Die Zeilen bleiben reiner Text; nur die Farbe
+  kommt aus einer Mustertabelle
 
 Ohne Daten stehen die Karten trotzdem da — mit einem gedämpften Gerüst und
 Strichen statt Zahlen. **Nie erfundene Werte:** Auf einer Anzeige, die den
