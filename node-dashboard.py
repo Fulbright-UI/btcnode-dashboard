@@ -2890,17 +2890,17 @@ background:var(--vertief);border:1px solid var(--rand);border-radius:8px;
 padding:var(--e2) var(--e3);font-family:var(--mono);font-size:11.5px;
 line-height:1.55;color:var(--leise);white-space:pre;tab-size:4}
 /* Line colours. Only what one looks for in a log: trouble at full colour,
-   blocks as a tint — the accepted tip a little warmer than its
-   announcement — and nothing else. The first version had the probes in
+   blocks as one tint — announcement and accepted tip alike, they belong
+   to the same event — and nothing else. The first version had the probes in
    green and both oranges at full strength: with a log that is mostly
    blocks and probes, that coloured nearly every line and highlighted
-   none (2026-09-02). 60/30 was still loud on the Pi; 35/18 is a warm grey
-   that reads when you look for it. The probes keep the class, so the
+   none (2026-09-02). 60 % was still loud on the Pi; 35 % is a warm grey
+   that reads when you look for it. Two shades for tip and announcement
+   were tried and dropped the same evening — one block, one colour. The probes keep the class, so the
    colour can come back with one rule, but they stay grey. */
 .lz.fehler{color:var(--fehler)}
 .lz.warn{color:var(--warn)}
-.lz.spitze{color:color-mix(in srgb,var(--block) 35%,var(--leise))}
-.lz.kopf{color:color-mix(in srgb,var(--block) 18%,var(--leise))}
+.lz.spitze,.lz.kopf{color:color-mix(in srgb,var(--block) 35%,var(--leise))}
 .protokoll pre::-webkit-scrollbar{width:8px;height:8px}
 .protokoll pre::-webkit-scrollbar-thumb{background:var(--randhell);border-radius:9px}
 
