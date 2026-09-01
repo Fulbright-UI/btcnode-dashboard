@@ -1170,6 +1170,21 @@ def collect_system(cfg):
     return ("System", fields)
 
 
+def block_age(height, block_time):
+    """Seconds since the tip block reached us — not since it was mined.
+
+    The timestamp inside a block is the miner's clock, and the rules allow
+    it up to two hours ahead of ours. On 2026-09-02 block 965,085 carried a
+    time 95 s in the future and the page said "Block · vor -95 s". The
+    arrival is known from the journal (ANNOUNCED); where it is not, the
+    miner's time is used but never allowed to go negative.
+    """
+    seen = ANNOUNCED.get(height)
+    if seen:
+        return max(0.0, time.time() - seen[1])
+    return max(0.0, time.time() - block_time)
+
+
 def collect_node(cfg):
     """Query Bitcoin Core. Uses only allowed, read-only methods."""
     chain = rpc(cfg, "getblockchaininfo")
@@ -1199,7 +1214,7 @@ def collect_node(cfg):
     block_time = chain.get("time")
     state_text = None
     if block_time:
-        age = time.time() - float(block_time)
+        age = block_age(blocks, float(block_time))
         # During the initial sync this is a block from 2010, not the chain
         # tip — "9 years ago" would be misleading here. The date format
         # belongs to the language: 23.08.2026 versus 2026-08-23. The American
@@ -1330,7 +1345,7 @@ def collect_node(cfg):
     summary = {
         "bloecke": blocks,
         "kopfzeilen": headers,
-        "blockalter": (time.time() - float(block_time)) if (block_time and in_sync) else None,
+        "blockalter": block_age(blocks, float(block_time)) if (block_time and in_sync) else None,
         "verbindungen": int(verbindungen),
         "mempool": int(mempool.get("size", 0)),
         "gebuehren": fee_rates,
@@ -3555,7 +3570,7 @@ def build_state_bar(level, word, extra, progress, kz):
         right_number = format_number(kz.get("bloecke", 0))
         age = kz.get("blockalter")
         right_label = html_escape(
-            t("Block · {age}", age=format_age(age)) if age
+            t("Block · {age}", age=format_age(age)) if age is not None
             else t("Block height"))
 
     parts.append(

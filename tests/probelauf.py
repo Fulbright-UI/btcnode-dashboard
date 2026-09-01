@@ -1156,6 +1156,15 @@ def check_block_path(nd, cfg):
     word = "angekündigt" if nd.LANGUAGE == "de" else "announced"
     check(word in data.get("blockweg", ""), "the sentence names the announcer")
 
+    # The state bar's "Block · N s ago" counts from the arrival in the
+    # journal (40 s in the mock), not from the miner's timestamp (600 s) —
+    # and can therefore never go negative.
+    label = re.search(r"Block · ([^<]*)</div>", page)
+    check(label is not None and "-" not in label.group(1)
+          and re.search(r"\b4\d s", label.group(1)) is not None,
+          "block age counts from arrival, never negative",
+          label.group(1) if label else "no label")
+
     sentence = data.get("blockweg", "")
     tip = f"{915312:,}".replace(",", "." if nd.LANGUAGE == "de" else ",")
     check(tip in sentence, "the sentence names the tip height", sentence)
