@@ -2884,6 +2884,7 @@ line-height:1.55;color:var(--leise);white-space:pre;tab-size:4}
 .lz.fehler{color:var(--fehler)}
 .lz.warn{color:var(--warn)}
 .lz.spitze{color:color-mix(in srgb,var(--block) 35%,var(--leise))}
+.lz .hervor{color:var(--block);font-weight:600}
 .protokoll pre::-webkit-scrollbar{width:8px;height:8px}
 .protokoll pre::-webkit-scrollbar-thumb{background:var(--randhell);border-radius:9px}
 
@@ -2928,6 +2929,7 @@ SCRIPT = r"""
   var KOMMA = __KOMMA__;       /* true = deutsches Dezimalkomma */
   /* Log line kinds, same table as the generator's. [kind, pattern] */
   var MUSTER = __MUSTER__.map(function (e) { return [e[0], new RegExp(e[1], e[2])]; });
+  var HERVOR = __HERVOR__;     /* kind -> pattern for the piece that stands out */
   var letztesLog = null;
 
   var wurzel = document.documentElement;
@@ -3149,7 +3151,19 @@ SCRIPT = r"""
           if (MUSTER[k][1].test(zeilen[i])) { art = MUSTER[k][0]; break; }
         }
         span.className = art ? "lz " + art : "lz";
-        span.textContent = zeilen[i];
+        var treffer = art && HERVOR[art] ? zeilen[i].match(new RegExp(HERVOR[art])) : null;
+        if (treffer) {
+          /* Three text pieces, the middle one in its own element. All via
+             textContent — the line is still never parsed as markup. */
+          span.appendChild(document.createTextNode(zeilen[i].slice(0, treffer.index)));
+          var b = document.createElement("b");
+          b.className = "hervor";
+          b.textContent = treffer[0];
+          span.appendChild(b);
+          span.appendChild(document.createTextNode(zeilen[i].slice(treffer.index + treffer[0].length)));
+        } else {
+          span.textContent = zeilen[i];
+        }
         kasten.appendChild(span);
         if (i < zeilen.length - 1) { kasten.appendChild(document.createTextNode("\n")); }
       }
@@ -3268,6 +3282,7 @@ def script_text():
     return (SCRIPT
             .replace("__TEXTE__", json.dumps(strings, ensure_ascii=False))
             # (?i) is Python's spelling; JavaScript takes the flag apart.
+            .replace("__HERVOR__", json.dumps(LOG_HIGHLIGHT))
             .replace("__MUSTER__", json.dumps(
                 [(k, p.replace("(?i)", ""), "i" if p.startswith("(?i)") else "")
                  for k, p in LOG_KINDS]))
@@ -3760,6 +3775,13 @@ LOG_KINDS = (
 )
 LOG_KINDS_RE = [(kind, re.compile(pattern)) for kind, pattern in LOG_KINDS]
 
+# Inside a coloured line, one piece may stand out more: the height in an
+# UpdateTip line, at full block orange while the rest of the line keeps the
+# tint (2026-09-02). Still text — the match is escaped like everything else
+# and only wrapped in its own span.
+LOG_HIGHLIGHT = {"spitze": r"height=\d+"}
+LOG_HIGHLIGHT_RE = {k: re.compile(p) for k, p in LOG_HIGHLIGHT.items()}
+
 
 def log_kind(row):
     for kind, pattern in LOG_KINDS_RE:
@@ -3774,7 +3796,15 @@ def log_markup(text):
     for row in text.split("\n"):
         kind = log_kind(row)
         cls = f' class="lz {kind}"' if kind else ' class=lz'
-        parts.append(f"<span{cls}>{html_escape(row)}</span>")
+        inner = html_escape(row)
+        pattern = LOG_HIGHLIGHT_RE.get(kind)
+        if pattern:
+            match = pattern.search(row)
+            if match:
+                inner = (html_escape(row[:match.start()])
+                         + f"<b class=hervor>{html_escape(match.group(0))}</b>"
+                         + html_escape(row[match.end():]))
+        parts.append(f"<span{cls}>{inner}</span>")
     return "\n".join(parts)
 
 

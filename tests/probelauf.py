@@ -1182,8 +1182,10 @@ def check_log_colours(page, nd):
     kinds = re.findall(r'<span class="lz (\w+)">', body)
     check(set(kinds) == {"spitze"},
           "only UpdateTip lines carry a class", " ".join(sorted(set(kinds))))
-    check("<b>" not in body and POISON not in body,
+    check(POISON not in body and "<b>Knoten" not in body,
           "log lines stay escaped inside the spans")
+    check(re.search(r'<b class=hervor>height=\d+</b>', body) is not None,
+          "the height inside an UpdateTip line stands out")
     script = nd.script_text()
     js_kinds = re.findall(r'\["(\w+)", "', script.split("var MUSTER")[1].split(";")[0])
     check(js_kinds == [k for k, _ in nd.LOG_KINDS],
