@@ -2015,8 +2015,10 @@ def build_network_map(peers, kz=None):
         kind = p["netz"] if p["netz"] in NETWORK_COLOURS else "neutral"
         filled = "" if p["eingehend"] else " voll"
         # The path of the most recent block: solid orange spoke to the peer
-        # that announced it first, dashed orange to the one that delivered
-        # it (only when that is a different peer), lit spoke to every peer
+        # that announced it first, a solid spoke in its own colour to the
+        # one that delivered it (only when that is a different peer — with
+        # a headers announcement Core fetches the block from the announcer,
+        # and then there is just the orange one), lit spoke to every peer
         # we handed it to.
         if i == announcer:
             role = " ansager"
@@ -2802,14 +2804,15 @@ stroke-width:1.6}
 .peer.ansager .peerlinie{stroke:var(--block);stroke-opacity:1;stroke-width:2}
 .peer.ansager .peerpunkt{stroke:var(--block);stroke-width:2.2;
 filter:drop-shadow(0 0 3px var(--block))}
-/* The deliverer, when it is not also the announcer: same colour, dashed. */
-.peer.quelle .peerlinie{stroke:var(--block);stroke-opacity:.9;stroke-width:1.6;
-stroke-dasharray:4 3}
-.peer.quelle .peerpunkt{stroke:var(--block);stroke-width:2}
+/* The deliverer, when it is not also the announcer: a solid spoke in the
+   peer's own network colour. Dashed orange was tried first and dropped on
+   2026-09-01 — two oranges read as one thing. */
+.peer.quelle .peerlinie{stroke:currentColor;stroke-opacity:1;stroke-width:2}
+.peer.quelle .peerpunkt{stroke-width:2.2}
 .peer.empfaenger .peerlinie{stroke:currentColor;stroke-opacity:.85;
 stroke-width:1.6}
 .netzfarbe.ansager{background:var(--block)}
-.netzfarbe.quelle{background:transparent;border:1.5px dashed var(--block)}
+.netzfarbe.quelle{background:var(--leise)}
 .netzfarbe.empfaenger{background:transparent;border:1.5px solid var(--leise)}
 .peerlegende{display:flex;flex-wrap:wrap;gap:var(--e1) var(--e3);
 color:var(--sehrleise);font-size:.68rem;margin-top:var(--e2)}
