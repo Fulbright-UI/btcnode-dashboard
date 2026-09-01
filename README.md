@@ -29,10 +29,10 @@ it later in one line of the configuration file.
 - **Connected nodes** as a fan: your own node in the middle, the peers to the
   left and right, with address, network type, latency and data volume on the
   line. Pointing at a row adds identifier, services and connection time.
-  The path of the most recent block is marked: an orange spoke to the peer
-  that announced it first, lit spokes to the peers that fetched it from you — with a 24-hour ranking of
-  who announces first most often. Your own Electrum server, which connects
-  over P2P like any peer, gets its own colour
+  The peer that announced the most recent block first gets an orange spoke,
+  with a 24-hour ranking of who announces first most often. Your own
+  Electrum server, which connects over P2P like any peer, gets its own
+  colour
 - **Chain check**: every few minutes Bitcoin Core asks a random node for its
   height — its defence against being fed a false chain. The last hour of
   those probes is shown as a row of dots; a node that reports more blocks

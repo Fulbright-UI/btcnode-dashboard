@@ -1148,13 +1148,13 @@ def check_block_path(nd, cfg):
     announcers = len(re.findall(r'class="peer [^"]*\bansager\b', page))
     receivers = len(re.findall(r'class="peer [^"]*\bempfaenger\b', page))
     check(announcers == 1, f"exactly one peer announced the last block ({announcers})")
-    check(sources == 0, "the deliverer is no longer marked on the map")
+    check(sources == 0 and receivers == 0,
+          "neither deliverer nor receivers are marked on the map any more")
     ranking = data.get("rangliste", "")
     check("× 40" in ranking and "999" in ranking,
           "the 24 h ranking counts announcements, gone peers by id", ranking)
     word = "angekündigt" if nd.LANGUAGE == "de" else "announced"
     check(word in data.get("blockweg", ""), "the sentence names the announcer")
-    check(receivers >= 3, f"{receivers} peers received it from us")
 
     sentence = data.get("blockweg", "")
     tip = f"{915312:,}".replace(",", "." if nd.LANGUAGE == "de" else ",")
@@ -1166,8 +1166,7 @@ def check_block_path(nd, cfg):
     # its source role, so it is counted here but not lit as a receiver.
     peers = data["peers"]
     counted = [p for p in peers if p["bloecke_an"] > 0]
-    check(len(counted) == receivers + 1,
-          f"{len(counted)} peers carry a count of blocks sent")
+    check(len(counted) == 8, f"{len(counted)} peers carry a count of blocks sent")
     check(any(p["zuletzt_von"] for p in peers),
           "the time of the last block received is passed on")
 

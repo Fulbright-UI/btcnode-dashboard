@@ -264,8 +264,6 @@ DE = {
     "Block {n} arrived {when} from {peer}": "Block {n} kam {when} von {peer}",
     "The last block arrived {when} from {peer}":
         "Der letzte Block kam {when} von {peer}",
-    "block data sent to {n} nodes|dativ": "Blockdaten an {n} Knoten gesendet",
-    "no node has requested it from us": "kein Knoten hat ihn von uns angefordert",
     "announced the last block first": "kündigte den letzten Block zuerst an",
     "{ok} of {n} probes matched our height, {behind} behind, none ahead · last {when}":
         "{ok} von {n} Stichproben bestätigen unsere Höhe, {behind} hinterher, keine voraus · zuletzt {when}",
@@ -285,7 +283,6 @@ DE = {
     "{n} bloecke to go": "noch {n} Blöcke",
     "progress not readable": "Fortschritt nicht lesbar",
     "Index": "Index",
-    "got it from us": "bekam ihn von uns",
     "Blocks from here": "Blöcke von hier",
     "Blocks to here": "Blöcke dorthin",
     "last {when}": "zuletzt {when}",
@@ -1763,15 +1760,7 @@ def block_path_text(peers, kz):
         else:
             head = t("The last block arrived {when} from {peer}",
                      when=when, peer=shorten_address(p["adresse"]))
-    # "sent block data", not "passed on": only peers that actually asked
-    # for the block (or take compact blocks unasked) show up here. On a Tor
-    # node most peers already have it and request nothing — a small number
-    # is the honest one (2026-09-01).
-    if receivers:
-        tail = t("block data sent to {n} nodes|dativ", n=len(receivers))
-    else:
-        tail = t("no node has requested it from us")
-    return f"{head} · {tail}"
+    return head
 
 
 def ranking_text(peers):
@@ -1970,7 +1959,6 @@ def build_network_map(peers, kz=None):
     """
     if not peers:
         return None
-    source, receivers, _ = block_path(peers, kz)
     announcer = announcer_of_tip(peers, kz)[0]
 
     row_height = 30
@@ -2018,12 +2006,10 @@ def build_network_map(peers, kz=None):
         # The deliverer used to get a spoke of its own; dropped on
         # 2026-09-02 — who announced first is the interesting peer, who
         # then handed over the bytes is not.
-        if i == announcer:
-            role = " ansager"
-        elif i in receivers:
-            role = " empfaenger"
-        else:
-            role = ""
+        # The receivers ("got it from us") were lit too until 2026-09-02;
+        # dropped with the deliverer — the map marks the announcer, full
+        # stop. The per-peer counts live on in the detail box.
+        role = " ansager" if i == announcer else ""
 
         parts.append(
             f'<g class="peer {kind}{role}" tabindex="0" data-nr="{i}">'
@@ -2792,18 +2778,14 @@ letter-spacing:.09em;text-transform:uppercase}
 stroke-width:1.6}
 .peer:hover .peerflaeche,.peer:focus-visible .peerflaeche,
 .peer[data-aktiv] .peerflaeche{fill:color-mix(in srgb,currentColor 9%,transparent)}
-/* Where the last block came from and where it went. The source spoke is
-   orange and a little wider; the receivers keep their network colour but
-   the spoke is lit as if pointed at, so the fan shows the path at a glance.
-   The dot of the source gets a second ring rather than a fill — filled
-   already means outbound. */
+/* Who announced the last block first: orange spoke, a little wider, and a
+   second ring on the dot rather than a fill — filled already means
+   outbound. Deliverer and receivers had marks of their own until
+   2026-09-02; one mark is enough. */
 .peer.ansager .peerlinie{stroke:var(--block);stroke-opacity:1;stroke-width:2}
 .peer.ansager .peerpunkt{stroke:var(--block);stroke-width:2.2;
 filter:drop-shadow(0 0 3px var(--block))}
-.peer.empfaenger .peerlinie{stroke:currentColor;stroke-opacity:.85;
-stroke-width:1.6}
 .netzfarbe.ansager{background:var(--block)}
-.netzfarbe.empfaenger{background:transparent;border:1.5px solid var(--leise)}
 .peerlegende{display:flex;flex-wrap:wrap;gap:var(--e1) var(--e3);
 color:var(--sehrleise);font-size:.68rem;margin-top:var(--e2)}
 .peerlegende span{display:flex;align-items:center;gap:var(--e1)}
@@ -3746,8 +3728,6 @@ def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None,
     legend += (
         '<span><i class="netzfarbe ansager"></i>'
         f"{html_escape(t('announced the last block first'))}</span>"
-        '<span><i class="netzfarbe empfaenger"></i>'
-        f"{html_escape(t('got it from us'))}</span>"
     )
 
     return (

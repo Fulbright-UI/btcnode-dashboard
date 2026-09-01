@@ -29,11 +29,10 @@ danach; ändern lässt es sich später mit einer Zeile in der Konfiguration.
 - **Verbundene Knoten** als Fächer: der eigene Node in der Mitte, die
   Gegenstellen links und rechts, mit Adresse, Netzart, Latenz und bewegter
   Datenmenge an der Linie. Beim Überfahren kommen Kennung, Dienste und
-  Verbindungsdauer dazu. Der Weg des letzten Blocks ist markiert: orange
-  Speiche zu dem, der ihn zuerst angekündigt hat, aufgehellte Speichen zu
-  den Gegenstellen, die ihn von dir geholt haben — mit einer 24-Stunden-Rangliste, wer am häufigsten zuerst
-  ankündigt. Der eigene Electrum-Server, der wie jede Gegenstelle über P2P
-  andockt, bekommt eine eigene Farbe
+  Verbindungsdauer dazu. Wer den letzten Block zuerst angekündigt hat,
+  bekommt eine orange Speiche — mit einer 24-Stunden-Rangliste, wer am
+  häufigsten zuerst ankündigt. Der eigene Electrum-Server, der wie jede
+  Gegenstelle über P2P andockt, bekommt eine eigene Farbe
 - **Kettenabgleich**: Bitcoin Core fragt alle paar Minuten einen zufälligen
   Knoten nach seiner Höhe — die Abwehr gegen eine untergeschobene Kette. Die
   Stichproben der letzten Stunde stehen als Punktreihe im Kopf der Netzkarte;
