@@ -295,11 +295,11 @@ DE = {
         "<b>Noch keine Antwort vom Node.</b> Diese Anzeige wurde eben erst "
         "gestartet und wartet auf die erste Auskunft. Während der "
         "Erstsynchronisation kann das eine Minute dauern.",
-    # Der Platzhalter heisst {age}, nicht {alter} — er muss zum Aufruf in
-    # build_trouble passen, nicht zur deutschen Fassung. Am 24.08.2026 stand
-    # hier {alter}: der Schluessel traf die Quellzeichenkette nicht mehr, die
-    # Suche lief ins Leere und auf der deutschen Seite stand ein englischer
-    # Satz mit deutschem Zeitwert darin ("from vor 55 s").
+    # The placeholder is {age}, not {alter}: it has to match the call in
+    # build_trouble, not the German wording. On 2026-08-24 it read {alter}
+    # here — the key no longer matched the source string, the lookup came
+    # back empty and the German page showed an English sentence with a
+    # German time value inside ("from vor 55 s").
     "<b>The node is not answering right now.</b> Shown is the last "
     "measured state from {age}. During the initial sync this is "
     "normal: Bitcoin Core pauses its query interface while it "
@@ -1255,7 +1255,7 @@ def collect_node(cfg):
         "gebuehren": fee_rates,
         # The median fee of the most recent block, from getblockstats. This
         # is what the tile shows large: what actually got in last time, not
-        # what Core guesses for next time (Jakob, 2026-09-01).
+        # what Core guesses for next time (2026-09-01).
         "median_gebuehr": (BLOCK_DATA[-1][3] if in_sync and BLOCK_DATA else None),
         "rueckstand": behind,
         "belegt": chain.get("size_on_disk", 0),
@@ -3072,7 +3072,7 @@ def build_metrics_bar(kz, level):
         tiles.append((format_number(kz.get("rueckstand", 0)),
                         t("bloecke rueckstand"), "", "", False))
     elif median is not None:
-        # The fee to enter with a transaction — the one number Jakob wants
+        # The fee to enter with a transaction — the one number you want
         # without looking for it. It took the mempool tile's place on
         # 2026-09-01; the count is still in the 'Mempool & fees' card.
         # Shown large is the median of the last block: half of what got in
@@ -3435,9 +3435,9 @@ def build_page(cfg, progress, in_sync, groups, error=None,
     title = (f"{format_percent(progress, 1)} % · {hostname}" if level == "sync"
              else f"{word} · {hostname}")
 
-    # Die Stufennamen sind bewusst dieselben wie in der Stilvorlage
-    # ([data-stufe=fehler]) und im Probelauf. Sie sind Kennungen, keine
-    # Anzeigetexte — deshalb bleiben sie unuebersetzt.
+    # The level names are deliberately the same as in the style sheet
+    # ([data-stufe=fehler]) and in the test run. They are identifiers, not
+    # display text — which is why they stay untranslated.
     point = {"ok": "%232fd39a", "warn": "%23f0b23f", "fehler": "%23f2645f",
              "veraltet": "%23f0b23f", "anlauf": "%23f0b23f",
              "sync": "%232fd39a"}[level]
