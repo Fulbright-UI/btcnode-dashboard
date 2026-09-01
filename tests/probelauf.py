@@ -1180,9 +1180,8 @@ def check_log_colours(page, nd):
     print("\n  Log colours")
     body = re.search(r"<code id=logtext>(.*?)</code>", page, re.S).group(1)
     kinds = re.findall(r'<span class="lz (\w+)">', body)
-    check("spitze" in kinds and "stich" in kinds and "kopf" in kinds,
-          "tip, announcement and probe lines carry their class",
-          " ".join(sorted(set(kinds))))
+    check(set(kinds) == {"spitze"},
+          "only UpdateTip lines carry a class", " ".join(sorted(set(kinds))))
     check("<b>" not in body and POISON not in body,
           "log lines stay escaped inside the spans")
     script = nd.script_text()

@@ -233,7 +233,6 @@ DE = {
         "Der Node hat die Liste der Gegenstellen noch nicht "
         "geliefert. Während der Synchronisation dauert das "
         "gelegentlich länger als das Zeitlimit.",
-    "filled = outbound": "gefüllt = ausgehend",
     "Point at a line for identifier, dienste and connection time.":
         "Auf eine Zeile zeigen für Kennung, Dienste und Verbindungsdauer.",
     "No log source configured.": "Keine Protokollquelle eingerichtet.",
@@ -1996,7 +1995,10 @@ def build_network_map(peers, kz=None):
             nabe_x = mx - LOGO_R - 5
 
         kind = p["netz"] if p["netz"] in NETWORK_COLOURS else "neutral"
-        filled = "" if p["eingehend"] else " voll"
+        # All dots filled since 2026-09-02. Hollow used to mean inbound,
+        # but the direction is written on the line anyway and the legend
+        # entry explaining the fill was one item too many.
+        filled = " voll"
         # The path of the most recent block: solid orange spoke to the peer
         # that announced it first, a solid spoke in its own colour to the
         # one that delivered it (only when that is a different peer — with
@@ -2418,8 +2420,9 @@ STYLE = """
 --text:#e7eaf1;--leise:#98a1b2;--sehrleise:#68717f;
 /* Meaning. Green says 'as expected', not 'problem solved'. */
 --akzent:#2fd39a;--warn:#f0b23f;--fehler:#f2645f;--info:#5aa2f0;
-/* Network types in the network map */
---netz-ipv4:#5aa2f0;--netz-ipv6:#9b8cff;--netz-onion:#2fd39a;--netz-i2p:#f0b23f;
+/* Network types in the network map. I2P is magenta since 2026-09-02: it
+   used to share the warning yellow and sat next to the block orange. */
+--netz-ipv4:#5aa2f0;--netz-ipv6:#9b8cff;--netz-onion:#2fd39a;--netz-i2p:#e070c8;
 /* The path of the most recent block through the map: Bitcoin orange, used
    nowhere else so it stays unmistakable */
 --block:#f7931a;
@@ -2442,7 +2445,7 @@ STYLE = """
 --rand:#e2e6ee;--randhell:#cdd4e0;--randhervor:#aab3c4;
 --text:#101319;--leise:#586074;--sehrleise:#828b9c;
 --akzent:#0d9c6b;--warn:#b8791a;--fehler:#d33f3c;--info:#2b6fd0;
---netz-ipv4:#2b6fd0;--netz-ipv6:#6a52e0;--netz-onion:#0d9c6b;--netz-i2p:#b8791a;
+--netz-ipv4:#2b6fd0;--netz-ipv6:#6a52e0;--netz-onion:#0d9c6b;--netz-i2p:#b0399a;
 --block:#d9780a;
 --netz-electrs:#0e8ed0;
 --schatten:0 1px 2px rgba(16,19,25,.05),0 8px 24px -14px rgba(16,19,25,.22)}}
@@ -2872,17 +2875,15 @@ background:var(--vertief);border:1px solid var(--rand);border-radius:8px;
 padding:var(--e2) var(--e3);font-family:var(--mono);font-size:11.5px;
 line-height:1.55;color:var(--leise);white-space:pre;tab-size:4}
 /* Line colours. Only what one looks for in a log: trouble at full colour,
-   blocks as one tint — announcement and accepted tip alike, they belong
-   to the same event — and nothing else. The first version had the probes in
-   green and both oranges at full strength: with a log that is mostly
-   blocks and probes, that coloured nearly every line and highlighted
-   none (2026-09-02). 60 % was still loud on the Pi; 35 % is a warm grey
-   that reads when you look for it. Two shades for tip and announcement
-   were tried and dropped the same evening — one block, one colour. The probes keep the class, so the
-   colour can come back with one rule, but they stay grey. */
+   the accepted tip (UpdateTip) as a tint, and nothing else. The first
+   version (2026-09-02) had the announcements in a second orange and the
+   chain-check probes in green: with a log that is mostly blocks and
+   probes, that coloured nearly every line and highlighted none. 60 % was
+   still loud on the Pi; 35 % is a warm grey that reads when you look for
+   it. */
 .lz.fehler{color:var(--fehler)}
 .lz.warn{color:var(--warn)}
-.lz.spitze,.lz.kopf{color:color-mix(in srgb,var(--block) 35%,var(--leise))}
+.lz.spitze{color:color-mix(in srgb,var(--block) 35%,var(--leise))}
 .protokoll pre::-webkit-scrollbar{width:8px;height:8px}
 .protokoll pre::-webkit-scrollbar-thumb{background:var(--randhell);border-radius:9px}
 
@@ -3736,8 +3737,6 @@ def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None,
         f"<div class=netzzahlen>{values}</div></div>"
         f"<div id=netzkarte>{svg}</div>"
         f"<div class=peerlegende>{legend}"
-        '<span><i class="netzfarbe neutral"></i>'
-        f"{html_escape(t('filled = outbound'))}</span>"
         "</div>"
         '<div class=peerdetail id=peerdetail>'
         f"<p class=blockweg>{html_escape(block_path_text(peers, kz))}</p>"
@@ -3748,7 +3747,9 @@ def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None,
 
 
 # Which log lines get a colour. Order matters: the first match wins, so
-# trouble comes before everything else. The patterns are compiled here for
+# trouble comes before everything else. Announcements and chain-check
+# probes had classes of their own for one evening (2026-09-02) — dropped:
+# one coloured line per block, and the probes are grey like the rest. The patterns are compiled here for
 # the server-side page and handed to dash.js as strings, so both routes
 # colour the same lines (2026-09-02). Colour only — the text of a line is
 # always set as text, never as markup.
@@ -3756,8 +3757,6 @@ LOG_KINDS = (
     ("fehler", r"(?i)\berror\b|misbehaving|disconnecting|Potential stale tip|corrupt"),
     ("warn", r"(?i)\bwarning\b"),
     ("spitze", r"UpdateTip:"),
-    ("kopf", r"Saw new (?:cmpctblock )?header"),
-    ("stich", r"New block-relay-only peer connected"),
 )
 LOG_KINDS_RE = [(kind, re.compile(pattern)) for kind, pattern in LOG_KINDS]
 
