@@ -36,6 +36,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta
 import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
@@ -117,6 +118,24 @@ def replace_system_parts(nd, case):
               "date='2016-11-03T12:23:13Z' progress=0.112807 "
               "cache=204.1MiB(1483920txo)")
     log = "\n".join(pattern.format(h=437184 - i) for i in range(150))
+    # Announcement lines with fresh timestamps, oldest first, one per block
+    # of the last day: peer 104 announces most, 103 (the mock's deliverer)
+    # some, 999 — no longer connected — a few. The last block, the tip,
+    # comes from 104, so announcer and deliverer differ on the map.
+    stamp = lambda ago: (datetime.now().astimezone() - timedelta(seconds=ago)
+                         ).strftime("%Y-%m-%dT%H:%M:%S%z")
+    announce = ("{ts} btcnode bitcoind[62345]: Saw new cmpctblock header "
+                "hash=00000000000000000001e4c1 height={h} peer={p}")
+    lines = []
+    for i in range(60):
+        h = 915312 - 59 + i
+        who = 104 if i % 3 else (103 if i % 6 else 999)
+        if h == 915312:
+            who = 104
+        ts = stamp((59 - i) * 600 + 40)
+        ts = ts[:-2] + ":" + ts[-2:]           # +0200 -> +02:00, as journald writes it
+        lines.append(announce.format(ts=ts, h=h, p=who))
+    log = "\n".join(lines) + "\n" + log
 
     def run(command, *a, **k):
         class Result:
@@ -1093,8 +1112,15 @@ def check_block_path(nd, cfg):
     data = json.loads((OUTPUT / "status.json").read_text(encoding="utf-8"))
 
     sources = len(re.findall(r'class="peer [^"]*\bquelle\b', page))
+    announcers = len(re.findall(r'class="peer [^"]*\bansager\b', page))
     receivers = len(re.findall(r'class="peer [^"]*\bempfaenger\b', page))
-    check(sources == 1, f"exactly one peer delivered the last block ({sources})")
+    check(announcers == 1, f"exactly one peer announced the last block ({announcers})")
+    check(sources == 1, f"exactly one other peer delivered it ({sources})")
+    ranking = data.get("rangliste", "")
+    check("× 40" in ranking and "999" in ranking,
+          "the 24 h ranking counts announcements, gone peers by id", ranking)
+    word = "angekündigt" if nd.LANGUAGE == "de" else "announced"
+    check(word in data.get("blockweg", ""), "the sentence names the announcer")
     check(receivers >= 3, f"{receivers} peers received it from us")
 
     sentence = data.get("blockweg", "")

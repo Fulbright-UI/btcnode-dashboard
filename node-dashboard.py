@@ -264,7 +264,13 @@ DE = {
         "Der letzte Block kam {when} von {peer}",
     "block data sent to {n} nodes|dativ": "Blockdaten an {n} Knoten gesendet",
     "no node has requested it from us": "kein Knoten hat ihn von uns angefordert",
-    "delivered the last block": "lieferte den letzten Block",
+    "announced the last block first": "kündigte den letzten Block zuerst an",
+    "delivered it": "lieferte ihn",
+    "Block {n} · announced {when} by {peer}": "Block {n} · angekündigt {when} von {peer}",
+    " · delivered by {peer}": " · geliefert von {peer}",
+    "peer {n} (no longer connected)": "Peer {n} (nicht mehr verbunden)",
+    "first to announce, {total} blocks in 24 h: {parts}":
+        "zuerst angekündigt, {total} Blöcke in 24 h: {parts}",
     "Electrum · local": "Electrum · lokal",
     "complete · block {n}": "vollständig · Block {n}",
     "{n} of {tip} bloecke · {rest}": "{n} von {tip} Blöcken · {rest}",
@@ -1426,6 +1432,102 @@ def track_block_traffic(peers):
         del BLOCK_TRAFFIC[pid]
 
 
+# Who announced each block first. Bitcoin Core logs one line per new block:
+#   Saw new cmpctblock header hash=… height=965079 peer=311
+# The peer that announces first is the one with the best view of the
+# network — a more telling figure than who delivered the block, which on a
+# Tor node is nearly always the same high-bandwidth peer (2026-09-01).
+#   height -> (peer id, unix time of the announcement)
+ANNOUNCED = {}
+ANNOUNCED_KEEP = 24 * 3600
+ANNOUNCE_LINE = re.compile(
+    r"Saw new (?:cmpctblock )?header hash=\S+ height=(\d+)\S* .*?peer=(\d+)")
+JOURNAL_TIME = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+\-]\d{2}:\d{2})")
+ANNOUNCED_PRIMED = [False]
+
+
+def collect_announcements(cfg):
+    """Read the announcement lines and update ANNOUNCED.
+
+    The first pass reads a day back so the ranking is complete right after
+    a restart; later passes only need the newest lines. A height already
+    known is not overwritten — the first announcement is the one that
+    counts, and the journal is read oldest first.
+    """
+    service = "bitcoind"
+    if not os.path.exists(f"/etc/systemd/system/{service}.service"):
+        return
+    if ANNOUNCED_PRIMED[0]:
+        window = ["-n", "300"]
+    else:
+        window = ["--since", "-25h"]
+    try:
+        r = subprocess.run(
+            ["journalctl", "-u", service, *window, "--no-pager",
+             "--output=short-iso"],
+            capture_output=True, text=True, timeout=20, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return
+    if r.returncode != 0:
+        return
+    ANNOUNCED_PRIMED[0] = True
+    for row in r.stdout.splitlines():
+        match = ANNOUNCE_LINE.search(row)
+        if not match:
+            continue
+        height, peer_id = int(match.group(1)), int(match.group(2))
+        if height in ANNOUNCED:
+            continue
+        stamp = JOURNAL_TIME.match(row)
+        try:
+            when = datetime.fromisoformat(stamp.group(1)).timestamp() if stamp else time.time()
+        except ValueError:
+            when = time.time()
+        ANNOUNCED[height] = (peer_id, when)
+    cutoff = time.time() - ANNOUNCED_KEEP
+    for h in [h for h, (_, w) in ANNOUNCED.items() if w < cutoff]:
+        del ANNOUNCED[h]
+
+
+def announcer_of_tip(peers, kz):
+    """(peer index or None, peer id, height, time) of the newest announcement.
+
+    The index is None when the announcing peer is no longer connected; the
+    id is still returned so the sentence can name it.
+    """
+    if not ANNOUNCED:
+        return None, None, None, None
+    height = max(ANNOUNCED)
+    peer_id, when = ANNOUNCED[height]
+    tip = (kz or {}).get("bloecke")
+    # A stale entry — the node has moved on without a logged announcement
+    # (e.g. a block found by header sync after a restart) — is not "the
+    # last block" and must not be shown as such.
+    if tip and height < tip - 1:
+        return None, None, None, None
+    index = next((i for i, p in enumerate(peers) if p.get("id") == peer_id), None)
+    return index, peer_id, height, when
+
+
+def announcer_ranking(peers, limit=3):
+    """The peers that announced most blocks first in the last 24 hours.
+
+    Returns [(label, count)], connected peers by short address, others by
+    their Core peer id.
+    """
+    counts = {}
+    for peer_id, _ in ANNOUNCED.values():
+        counts[peer_id] = counts.get(peer_id, 0) + 1
+    by_id = {p.get("id"): p for p in peers}
+    ranking = []
+    for peer_id, n in sorted(counts.items(), key=lambda e: -e[1])[:limit]:
+        p = by_id.get(peer_id)
+        label = (shorten_address(p["adresse"]) if p
+                 else t("peer {n} (no longer connected)", n=peer_id))
+        ranking.append((label, n))
+    return ranking
+
+
 def block_path(peers, kz):
     """Who delivered the most recent block, and who got it from us.
 
@@ -1456,20 +1558,39 @@ def block_path(peers, kz):
 
 
 def block_path_text(peers, kz):
-    """The sentence in the detail box while nothing is pointed at."""
+    """The sentence in the detail box while nothing is pointed at.
+
+    Announcer first, deliverer second — when both are the same peer, only
+    once. The announcement carries the height and the time: it is logged,
+    so both are exact; the delivery time is only known to the pass.
+    """
     source, receivers, height = block_path(peers, kz)
     if not peers:
         return ""
-    if source is None:
+    ann_index, ann_id, ann_height, ann_when = announcer_of_tip(peers, kz)
+    if ann_height:
+        height = ann_height
+    if ann_id is None and source is None:
         return t("The node that delivered the last block is no longer connected.")
-    p = peers[source]
-    when = format_age(time.time() - p["zuletzt_von"])
-    if height:
-        head = t("Block {n} arrived {when} from {peer}", n=format_number(height),
-                 when=when, peer=shorten_address(p["adresse"]))
+
+    if ann_id is not None:
+        ann_name = (shorten_address(peers[ann_index]["adresse"])
+                    if ann_index is not None else t("peer {n} (no longer connected)", n=ann_id))
+        when = format_age(time.time() - ann_when)
+        head = t("Block {n} · announced {when} by {peer}", n=format_number(height),
+                 when=when, peer=ann_name)
+        if source is not None and source != ann_index:
+            head += t(" · delivered by {peer}",
+                      peer=shorten_address(peers[source]["adresse"]))
     else:
-        head = t("The last block arrived {when} from {peer}",
-                 when=when, peer=shorten_address(p["adresse"]))
+        p = peers[source]
+        when = format_age(time.time() - p["zuletzt_von"])
+        if height:
+            head = t("Block {n} arrived {when} from {peer}", n=format_number(height),
+                     when=when, peer=shorten_address(p["adresse"]))
+        else:
+            head = t("The last block arrived {when} from {peer}",
+                     when=when, peer=shorten_address(p["adresse"]))
     # "sent block data", not "passed on": only peers that actually asked
     # for the block (or take compact blocks unasked) show up here. On a Tor
     # node most peers already have it and request nothing — a small number
@@ -1479,6 +1600,17 @@ def block_path_text(peers, kz):
     else:
         tail = t("no node has requested it from us")
     return f"{head} · {tail}"
+
+
+def ranking_text(peers):
+    """Second line of the detail box: who was first most often, 24 h."""
+    ranking = announcer_ranking(peers)
+    if not ranking:
+        return ""
+    total = len(ANNOUNCED)
+    parts = " · ".join(f"{label} × {n}" for label, n in ranking)
+    return t("first to announce, {total} blocks in 24 h: {parts}",
+             total=total, parts=parts)
 
 
 def collect_peers(cfg, limit):
@@ -1667,6 +1799,7 @@ def build_network_map(peers, kz=None):
     if not peers:
         return None
     source, receivers, _ = block_path(peers, kz)
+    announcer = announcer_of_tip(peers, kz)[0]
 
     row_height = 30
     margin_top = 34
@@ -1704,10 +1837,18 @@ def build_network_map(peers, kz=None):
 
         kind = p["netz"] if p["netz"] in NETWORK_COLOURS else "neutral"
         filled = "" if p["eingehend"] else " voll"
-        # The path of the most recent block: orange spoke to the peer it
-        # came from, lit spoke to every peer we handed it to.
-        role = (" quelle" if i == source else
-                " empfaenger" if i in receivers else "")
+        # The path of the most recent block: solid orange spoke to the peer
+        # that announced it first, dashed orange to the one that delivered
+        # it (only when that is a different peer), lit spoke to every peer
+        # we handed it to.
+        if i == announcer:
+            role = " ansager"
+        elif i == source:
+            role = " quelle"
+        elif i in receivers:
+            role = " empfaenger"
+        else:
+            role = ""
 
         parts.append(
             f'<g class="peer {kind}{role}" tabindex="0" data-nr="{i}">'
@@ -2459,12 +2600,17 @@ stroke-width:1.6}
    the spoke is lit as if pointed at, so the fan shows the path at a glance.
    The dot of the source gets a second ring rather than a fill — filled
    already means outbound. */
-.peer.quelle .peerlinie{stroke:var(--block);stroke-opacity:1;stroke-width:2}
-.peer.quelle .peerpunkt{stroke:var(--block);stroke-width:2.2;
+.peer.ansager .peerlinie{stroke:var(--block);stroke-opacity:1;stroke-width:2}
+.peer.ansager .peerpunkt{stroke:var(--block);stroke-width:2.2;
 filter:drop-shadow(0 0 3px var(--block))}
+/* The deliverer, when it is not also the announcer: same colour, dashed. */
+.peer.quelle .peerlinie{stroke:var(--block);stroke-opacity:.9;stroke-width:1.6;
+stroke-dasharray:4 3}
+.peer.quelle .peerpunkt{stroke:var(--block);stroke-width:2}
 .peer.empfaenger .peerlinie{stroke:currentColor;stroke-opacity:.85;
 stroke-width:1.6}
-.netzfarbe.quelle{background:var(--block)}
+.netzfarbe.ansager{background:var(--block)}
+.netzfarbe.quelle{background:transparent;border:1.5px dashed var(--block)}
 .netzfarbe.empfaenger{background:transparent;border:1.5px solid var(--leise)}
 .peerlegende{display:flex;flex-wrap:wrap;gap:var(--e1) var(--e3);
 color:var(--sehrleise);font-size:.68rem;margin-top:var(--e2)}
@@ -2600,6 +2746,7 @@ SCRIPT = r"""
   var peers = [];
   var gemerkt = null;          // pinned peer, survives the refresh
   var blockweg = "";           // sentence about the last block's path
+  var rangliste = "";          // who announced first most often, 24 h
   var erzeugt = 0;             // when status.json was written, unix seconds
 
   /* Without JS a <meta refresh> reloads the page periodically. With JS that
@@ -2654,6 +2801,10 @@ SCRIPT = r"""
       satz.className = "blockweg";
       satz.textContent = blockweg;
       kasten.appendChild(satz);
+      var rang = document.createElement("p");
+      rang.className = "blockweg";
+      rang.textContent = rangliste;
+      kasten.appendChild(rang);
       var hinweis = document.createElement("p");
       hinweis.className = "leer";
       hinweis.textContent = T.hinweis;
@@ -2777,6 +2928,7 @@ SCRIPT = r"""
     setzeZone("z-netz", daten.zonen.netz);
     peers = daten.peers || [];
     blockweg = daten.blockweg || "";
+    rangliste = daten.rangliste || "";
     erzeugt = daten.erzeugt || 0;
     verdrahtePeers();
   }
@@ -3348,8 +3500,10 @@ def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None):
         for kind, name in LEGEND
     )
     legend += (
+        '<span><i class="netzfarbe ansager"></i>'
+        f"{html_escape(t('announced the last block first'))}</span>"
         '<span><i class="netzfarbe quelle"></i>'
-        f"{html_escape(t('delivered the last block'))}</span>"
+        f"{html_escape(t('delivered it'))}</span>"
         '<span><i class="netzfarbe empfaenger"></i>'
         f"{html_escape(t('got it from us'))}</span>"
     )
@@ -3365,6 +3519,7 @@ def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None):
         "</div>"
         '<div class=peerdetail id=peerdetail>'
         f"<p class=blockweg>{html_escape(block_path_text(peers, kz))}</p>"
+        f"<p class=blockweg>{html_escape(ranking_text(peers))}</p>"
         f"<p class=leer>{html_escape(t('Point at a line for identifier, dienste and connection time.'))}</p>"
         "</div></section>"
     )
@@ -3602,6 +3757,7 @@ def build_status(cfg, zones, peers, now, stale_for=None, progress=0.0,
         # The sentence for the detail box, ready made: dash.js sets it via
         # textContent and does not rebuild it from the peer list.
         "blockweg": block_path_text(peers or [], summary or {}),
+        "rangliste": ranking_text(peers or []),
     }, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -3772,6 +3928,7 @@ def one_pass(cfg):
     updates = collect_updates(cfg)
     tor = collect_tor(cfg)
     logs = collect_log(cfg)
+    collect_announcements(cfg)
 
     now = datetime.now(timezone.utc).astimezone()
     zones = build_zones(cfg, progress, in_sync, groups, error,
