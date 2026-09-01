@@ -30,9 +30,15 @@ danach; ändern lässt es sich später mit einer Zeile in der Konfiguration.
   Gegenstellen links und rechts, mit Adresse, Netzart, Latenz und bewegter
   Datenmenge an der Linie. Beim Überfahren kommen Kennung, Dienste und
   Verbindungsdauer dazu. Der Weg des letzten Blocks ist markiert: orange
-  Speiche zum Lieferanten, aufgehellte Speichen zu den Gegenstellen, die ihn
-  von dir geholt haben. Der eigene Electrum-Server, der wie jede Gegenstelle
-  über P2P andockt, bekommt eine eigene Farbe
+  Speiche zu dem, der ihn zuerst angekündigt hat, eine durchgezogene zum
+  Lieferanten, aufgehellte Speichen zu den Gegenstellen, die ihn von dir
+  geholt haben — mit einer 24-Stunden-Rangliste, wer am häufigsten zuerst
+  ankündigt. Der eigene Electrum-Server, der wie jede Gegenstelle über P2P
+  andockt, bekommt eine eigene Farbe
+- **Kettenabgleich**: Bitcoin Core fragt alle paar Minuten einen zufälligen
+  Knoten nach seiner Höhe — die Abwehr gegen eine untergeschobene Kette. Die
+  Stichproben der letzten Stunde stehen als Punktreihe im Kopf der Netzkarte;
+  meldet ein Knoten mehr Blöcke als du hast, erscheint oben eine Meldung
 - **Systemzustand** des Rechners: Temperatur mit Stundenverlauf, Auslastung,
   Arbeitsspeicher, Plattenplatz — bei einem Raspberry Pi auch die
   Stromversorgung, weil Unterspannung die häufigste Ursache beschädigter
@@ -168,7 +174,9 @@ Gegenstelle. Sie werden serverseitig maskiert und im Browser ausschließlich
 liegen Stil und Skript in eigenen Dateien und nicht im HTML.
 
 **Der Generator geht nie ins Internet.** Er spricht ausschließlich mit
-`127.0.0.1`.
+`127.0.0.1` — und die Dienstdefinition sagt das auch dem Kernel
+(`IPAddressDeny=any`, `IPAddressAllow=localhost`), das Versprechen hält also
+auch gegen einen Fehler im Programm.
 
 **Kein Knopf erreicht den Node.** Ein Neustart-Knopf bräuchte einen Endpunkt,
 der Eingaben annimmt, und einen Rechteweg bis zu systemd. Das macht aus
@@ -263,12 +271,16 @@ mit HTTP 403, so wie eine fehlende Whitelist-Eintragung es täte.
 Die erzeugte Seite liegt danach in `tests/ausgabe/index.html` und lässt sich im
 Browser öffnen.
 
-Rund 130 Prüfungen laufen dabei durch, in beiden Sprachen: Wohlgeformtheit des
+Rund 170 Prüfungen laufen dabei durch, in beiden Sprachen: Wohlgeformtheit des
 HTML, keine Schaltflächen, die den Node erreichen, keine Inline-Stile, der
 richtige Dezimaltrenner, Maskierung fremder Werte, das Toleranzfenster in beide
-Richtungen, die Geometrie der Netzkarte — und zwei Prüfungen, die aus echtem
-Schaden entstanden sind: Jeder sichtbare Text braucht eine Übersetzung, und
-jede im Markup benutzte CSS-Klasse muss es in der Stilvorlage geben.
+Richtungen, die Geometrie der Netzkarte, der Weg des letzten Blocks und der
+Kettenabgleich — und mehrere, die aus echtem Schaden entstanden sind: Jeder
+sichtbare Text braucht eine Übersetzung, jede im Markup benutzte CSS-Klasse
+muss es in der Stilvorlage geben, jedes Feld, das das Browser-Skript liest,
+muss in `status.json` stehen, und die Zeile zur Stromversorgung muss
+erscheinen, obwohl die Attrappe — wie der abgeschottete Dienst — `vcgencmd`
+nicht aufrufen kann.
 
 ---
 

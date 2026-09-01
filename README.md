@@ -30,9 +30,14 @@ it later in one line of the configuration file.
   left and right, with address, network type, latency and data volume on the
   line. Pointing at a row adds identifier, services and connection time.
   The path of the most recent block is marked: an orange spoke to the peer
-  that delivered it, lit spokes to the peers that fetched it from you. Your
-  own Electrum server, which connects over P2P like any peer, gets its own
-  colour
+  that announced it first, a solid one to the peer that delivered it, lit
+  spokes to the peers that fetched it from you — with a 24-hour ranking of
+  who announces first most often. Your own Electrum server, which connects
+  over P2P like any peer, gets its own colour
+- **Chain check**: every few minutes Bitcoin Core asks a random node for its
+  height — its defence against being fed a false chain. The last hour of
+  those probes is shown as a row of dots; a node that reports more blocks
+  than you have raises a notice at the top of the page
 - **System state** of the machine: temperature with an hourly curve, load,
   memory, disk space — on a Raspberry Pi also the power supply, because
   undervoltage is the most common cause of corrupted blockchain data
@@ -164,7 +169,10 @@ where markup cannot arise by construction.
 **The Content Security Policy works without `unsafe-inline`.** That is exactly
 why style and script live in their own files and not in the HTML.
 
-**The generator never goes online.** It talks to `127.0.0.1` and nothing else.
+**The generator never goes online.** It talks to `127.0.0.1` and nothing
+else — and the service unit says so to the kernel (`IPAddressDeny=any`,
+`IPAddressAllow=localhost`), so the promise holds even against a bug in the
+program.
 
 **No button reaches the node.** A restart button would need an endpoint that
 accepts input and a path of privilege up to systemd. That turns "at worst
@@ -256,12 +264,15 @@ exactly as a missing whitelist entry would.
 The generated page then sits in `tests/ausgabe/index.html` and can be opened
 in a browser.
 
-About 130 checks run in the process, in both languages: well-formedness of the
+About 170 checks run in the process, in both languages: well-formedness of the
 HTML, no buttons that reach the node, no inline styles, the correct decimal
 separator, escaping of foreign values, the tolerance window in both
-directions, the geometry of the network map — and two checks that came out of
-real breakage: every visible string must have a translation, and every CSS
-class used in the markup must exist in the style sheet.
+directions, the geometry of the network map, the path of the last block and
+the chain check — and several that came out of real breakage: every visible
+string must have a translation, every CSS class used in the markup must exist
+in the style sheet, every field the browser script reads must exist in
+`status.json`, and the power supply row must appear even though the mock,
+like the sandboxed service, cannot call `vcgencmd`.
 
 ---
 
