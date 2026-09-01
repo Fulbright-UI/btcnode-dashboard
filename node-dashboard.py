@@ -2884,7 +2884,10 @@ line-height:1.55;color:var(--leise);white-space:pre;tab-size:4}
 .lz.fehler{color:var(--fehler)}
 .lz.warn{color:var(--warn)}
 .lz.spitze{color:color-mix(in srgb,var(--block) 35%,var(--leise))}
-.lz .hervor{color:var(--block);font-weight:600}
+/* The height: clearly warmer than its line, but not a full-orange badge
+   — 70 % looked like a warning on the Pi (2026-09-02). Weight stays
+   normal, the colour does the work. */
+.lz .hervor{color:color-mix(in srgb,var(--block) 65%,var(--leise))}
 .protokoll pre::-webkit-scrollbar{width:8px;height:8px}
 .protokoll pre::-webkit-scrollbar-thumb{background:var(--randhell);border-radius:9px}
 
