@@ -1442,9 +1442,12 @@ def block_path(peers, kz):
     if not known:
         return None, [], None
     arrived, source = max(known)
+    # Our own electrs fetches every new block from us over P2P. That is
+    # not relay into the network, so it is neither a receiver here nor lit
+    # on the map — it turned its spoke blue on every block (2026-09-01).
     receivers = [i for i, p in enumerate(peers)
-                 if i != source and p.get("zuletzt_an")
-                 and p["zuletzt_an"] >= arrived - 5]
+                 if i != source and p["netz"] != "electrs"
+                 and p.get("zuletzt_an") and p["zuletzt_an"] >= arrived - 5]
     height = None
     age = (kz or {}).get("blockalter")
     if age is not None and time.time() - arrived <= age + 120:
