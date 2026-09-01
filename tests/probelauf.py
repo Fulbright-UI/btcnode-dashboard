@@ -93,10 +93,10 @@ def replace_system_parts(nd, case):
         path = str(path)
         if "thermal" in path:
             return "69634"
-        # The firmware's throttle flags via sysfs — the only route the
-        # service has, since PrivateDevices hides /dev/vchiq from vcgencmd.
+        # No firmware sysfs file here, as on the Pi (2026-09-01): the
+        # power supply has to come through the hwmon route below.
         if "get_throttled" in path:
-            return "0"
+            return None
         if "onion" in path or "hostname" in path:
             return onion
         return real_read(path, default)
@@ -168,6 +168,17 @@ def replace_system_parts(nd, case):
         return Result()
 
     nd.subprocess.run = run
+
+    # The rpi_volt hwmon driver, as the Pi 4 kernel exposes it: a directory
+    # per sensor with 'name' and the alarm file. Built in a temp dir so the
+    # real read_file path runs, not a fake.
+    hwmon = Path(tempfile.mkdtemp(prefix="hwmon-"))
+    (hwmon / "hwmon0").mkdir()
+    (hwmon / "hwmon0" / "name").write_text("cpu_thermal\n")
+    (hwmon / "hwmon1").mkdir()
+    (hwmon / "hwmon1" / "name").write_text("rpi_volt\n")
+    (hwmon / "hwmon1" / "in0_lcrit_alarm").write_text("0\n")
+    nd.HWMON_DIR = str(hwmon)
 
     # One hour of temperature history so the curve has something to draw
     now = time.time()
@@ -1171,7 +1182,7 @@ def check_power_supply(page):
     print("\n  Power supply")
     text = re.sub(r"<[^>]+>", " ", page)
     check("stabil" in text or "stable" in text,
-          "the power supply row is on the page, read from sysfs")
+          "the power supply row is on the page, read from the rpi_volt hwmon")
 
 
 def check_electrum_index(page, case):

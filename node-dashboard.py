@@ -113,7 +113,6 @@ DE = {
     "verified through {date}": "geprüft bis {date}",
     "{n} pp/h": "{n} %-Punkte/Std",
     "Block reward": "Blockbelohnung",
-    "Next halving": "Nächste Halbierung",
     "remaining": "noch",
     "{n} bloecke": "{n} Blöcke",
     "Difficulty": "Schwierigkeit",
@@ -145,7 +144,7 @@ DE = {
     "Network": "Netzwerk",
     "Chain": "Kette",
     "Mempool": "Mempool",
-    "at {n} · {when}": "bei {n} · {when}",
+    "Halving": "Halbierung",
     "next adjustment": "nächste Anpassung",
     "in {n} blocks|dativ": "in {n} Blöcken",
     "fill level": "Füllstand",
@@ -1031,6 +1030,25 @@ def port_open(host, port):
 
 
 # ==================================================================== Sammeln
+HWMON_DIR = "/sys/class/hwmon"
+
+
+def undervoltage_alarm():
+    """1 or 0 from the rpi_volt hwmon driver, None when there is none."""
+    try:
+        entries = os.listdir(HWMON_DIR)
+    except OSError:
+        return None
+    for entry in entries:
+        base = os.path.join(HWMON_DIR, entry)
+        if (read_file(os.path.join(base, "name")) or "") != "rpi_volt":
+            continue
+        raw = read_file(os.path.join(base, "in0_lcrit_alarm"))
+        if raw and raw.strip() in ("0", "1"):
+            return int(raw.strip())
+    return None
+
+
 def collect_system(cfg):
     """State of the machine itself — regardless of whether the node runs."""
     fields = []
@@ -1116,6 +1134,14 @@ def collect_system(cfg):
             value = int(raw.strip().lower().removeprefix("0x"), 16)
         except ValueError:
             value = None
+    # A current Pi 4 kernel (seen 2026-09-01) has no such file. It has the hwmon
+    # driver 'rpi_volt' instead, whose in0_lcrit_alarm is 1 while the
+    # supply is below threshold — "undervoltage now", the same bit 0x1
+    # vcgencmd reports, without the "since boot" history.
+    if value is None:
+        alarm = undervoltage_alarm()
+        if alarm is not None:
+            value = 0x1 if alarm else 0
     if value is None:
         try:
             r = subprocess.run(
@@ -1214,9 +1240,11 @@ def collect_node(cfg):
     chain_fields = [
         (t("Chain"), "", "spalte"),
         (t("Block reward"), decimal_sep(f"{reward:.3f} BTC"), ""),
-        (t("Next halving"),
-         t("at {n} · {when}", n=format_number(next_height),
-           when=when.strftime("%m/%Y")), ""),
+        # Short on purpose: "Nächste Halbierung · bei 1.050.000 · 04/2028"
+        # wrapped in the inner column and pushed the chain side one row
+        # below the mempool side (seen on the Pi, 2026-09-01).
+        (t("Halving"),
+         f"{format_number(next_height)} · {when.strftime('%m/%Y')}", ""),
         (t("remaining"), t("{n} bloecke", n=format_number(blocks_left)), ""),
         (t("Difficulty"), format_magnitude(float(chain.get("difficulty", 0))), ""),
     ]
