@@ -268,7 +268,8 @@ DE = {
     "no node has requested it from us": "kein Knoten hat ihn von uns angefordert",
     "announced the last block first": "kündigte den letzten Block zuerst an",
     "delivered it": "lieferte ihn",
-    "{ok} of {n} samples confirm block {h}": "{ok} von {n} Stichproben bestätigen Block {h}",
+    "{ok} of {n} strangers saw our height, {behind} behind, none ahead · last {when}":
+        "{ok} von {n} Fremden sahen unsere Höhe, {behind} hinterher, keiner voraus · zuletzt {when}",
     "a stranger reports {n} blocks more than we have":
         "ein Fremder meldet {n} Blöcke mehr als wir",
     "Chain check: Core asks a random stranger for its height every few minutes. Last {when}":
@@ -1637,15 +1638,21 @@ def chain_check_markup(kz):
     dots, ok, total, ahead = chain_check(kz)
     if not total:
         return ""
-    tip = kz.get("bloecke")
     last = format_age(time.time() - CHAIN_SAMPLES[-1][0])
+    # Each sample is compared with our height AT THAT TIME, so the sentence
+    # must not name the current tip: "confirm block 965,082" thirty seconds
+    # after that block arrived, from a sample taken at 22:24, was wrong
+    # (2026-09-01). What the samples say is whether strangers saw the same
+    # chain as we did — behind is harmless, ahead is the alarm.
+    behind = total - ok - sum(1 for d in dots if d == "voraus")
     if ahead:
         sentence = t("a stranger reports {n} blocks more than we have",
                      n=ahead)
         cls = " warn"
     else:
-        sentence = t("{ok} of {n} samples confirm block {h}",
-                     ok=ok, n=total, h=format_number(tip))
+        sentence = t("{ok} of {n} strangers saw our height, {behind} behind, "
+                     "none ahead · last {when}",
+                     ok=ok, n=total, behind=behind, when=last)
         cls = ""
     marks = "".join(f'<i class="stich {d}"></i>' for d in dots[-12:])
     return (f'<span class="abgleich{cls}" title="{html_escape(t("Chain check: Core asks a random stranger for its height every few minutes. Last {when}", when=last))}">'
