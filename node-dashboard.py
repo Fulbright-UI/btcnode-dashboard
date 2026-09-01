@@ -238,6 +238,8 @@ DE = {
         "Auf eine Zeile zeigen für Kennung, Dienste und Verbindungsdauer.",
     "No log source configured.": "Keine Protokollquelle eingerichtet.",
     "no eintraege": "keine Einträge",
+    "log not readable: {e}": "Protokoll nicht lesbar: {e}",
+    "no access to the journal": "kein Zugriff auf das Journal",
 
     # -- State bar and metrics bar -------------------------------------------
     "Not reachable": "Nicht erreichbar",
@@ -785,7 +787,9 @@ def rpc(cfg, method, params=None):
 
     try:
         with urllib.request.urlopen(request, timeout=limit_value) as response:
-            result = json.loads(response.read().decode())
+            # Bounded: the largest answer we ever ask for (getpeerinfo with
+            # 64 peers) is well under a megabyte.
+            result = json.loads(response.read(16_000_000).decode())
     except urllib.error.HTTPError as e:
         if e.code == 403:
             DENIED[method] = time.time()
@@ -815,6 +819,8 @@ def rpc(cfg, method, params=None):
     except json.JSONDecodeError as e:
         raise RpcError(f"Unreadable answer from {method}") from e
 
+    if not isinstance(result, dict) or "result" not in result:
+        raise RpcError(f"Unreadable answer from {method}")
     if result.get("error"):
         raise RpcError(f"{method}: {result['error']}")
     return result["result"]
@@ -1086,13 +1092,33 @@ def collect_system(cfg):
         fields.append((t("Pi up for"),
                        format_duration(float(uptime.split()[0])), ""))
 
-    # Undervoltage is the most common cause of corrupted blockchain data
+    # Undervoltage is the most common cause of corrupted blockchain data.
+    #
+    # Read from sysfs first: 'vcgencmd' talks to the firmware through
+    # /dev/vchiq, and the service runs with PrivateDevices=true, which hides
+    # that device. So the call failed silently on the Pi from the first day
+    # and the row was simply missing — the mock answers the call, the test
+    # never noticed. Found on 2026-09-01 by comparing a screenshot with the
+    # test page. The sysfs file is exposed by the firmware driver and only
+    # needs read access (2026-09-01).
+    value = None
+    raw = read_file("/sys/devices/platform/soc/soc:firmware/get_throttled")
+    if raw:
+        try:
+            value = int(raw.strip().lower().removeprefix("0x"), 16)
+        except ValueError:
+            value = None
+    if value is None:
+        try:
+            r = subprocess.run(
+                ["vcgencmd", "get_throttled"], capture_output=True, text=True,
+                timeout=5, check=False)
+            if r.returncode == 0 and "=" in r.stdout:
+                value = int(r.stdout.strip().split("=")[1], 16)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            value = None
     try:
-        r = subprocess.run(
-            ["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=5, check=False
-        )
-        if r.returncode == 0 and "=" in r.stdout:
-            value = int(r.stdout.strip().split("=")[1], 16)
+        if value is not None:
             if value == 0:
                 fields.append((t("Power supply"), t("stable"), "gut"))
             else:
@@ -1105,7 +1131,7 @@ def collect_system(cfg):
                     notes.append(t("throttled"))
                 fields.append((t("Power supply"),
                                ", ".join(notes) or t("irregular"), "warn"))
-    except (OSError, ValueError, subprocess.SubprocessError):
+    except (TypeError, ValueError):
         pass
 
     # The card title stays ENGLISH inside the tuple. It is the identity of
@@ -2076,11 +2102,11 @@ def collect_log(cfg):
                 capture_output=True, text=True, timeout=10, check=False,
             )
         except (OSError, subprocess.SubprocessError) as e:
-            sections.append((service, f"Protokoll nicht lesbar: {e}"))
+            sections.append((service, t("log not readable: {e}", e=e)))
             continue
 
         if r.returncode != 0:
-            note = (r.stderr or "").strip() or "kein Zugriff auf das Journal"
+            note = (r.stderr or "").strip() or t("no access to the journal")
             sections.append((service, note))
             continue
 
@@ -2114,41 +2140,25 @@ def electrs_indexed_height(cfg):
 
     Two sources, both on localhost, neither reaching beyond this machine:
 
-    1. While electrs is serving, its Electrum protocol on the RPC port
-       answers 'blockchain.headers.subscribe' with the height of its own
-       index. Exact, and it is the same call every wallet makes first.
-    2. While it is still indexing it does not serve yet, but its Prometheus
-       endpoint (monitoring_addr in config.toml, on by default in 05) is
-       up from the start. The gauge is 'electrs_index_height{type="tip"}'
-       — measured on the Pi on 2026-09-01 with electrs 0.11.1. Should the
+    1. The Prometheus endpoint (monitoring_addr in config.toml, on by
+       default in 05) is up from the first second, even while electrs is
+       still indexing. The gauge is 'electrs_index_height{type="tip"}' —
+       measured on the Pi on 2026-09-01 with electrs 0.11.1. Should the
        name differ in another release, any gauge with 'height' in its name
-       is taken as a fallback — better an approximate bar than none.
+       is taken as a fallback. Asked first because it is a plain HTTP read
+       that electrs does not log.
+    2. The Electrum protocol on the RPC port answers
+       'blockchain.headers.subscribe' with the height of its index — the
+       same question every wallet asks first. Exact, but electrs may log
+       every connection, and it only works once electrs is serving. So it
+       is the fallback, not the rule.
     """
-    port = int(cfg.get("ELECTRS_PORT", 50001))
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
-            sock.sendall(b'{"jsonrpc":"2.0","id":0,'
-                         b'"method":"blockchain.headers.subscribe","params":[]}\n')
-            sock.settimeout(5)
-            raw = b""
-            while b"\n" not in raw and len(raw) < 65536:
-                chunk = sock.recv(4096)
-                if not chunk:
-                    break
-                raw += chunk
-        answer = json.loads(raw.split(b"\n", 1)[0].decode("utf-8"))
-        height = int(answer["result"]["height"])
-        if height > 0:
-            return height
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-
     metrics = cfg.get("ELECTRS_METRICS", "127.0.0.1:4224")
     try:
         with urllib.request.urlopen(f"http://{metrics}/", timeout=3) as r:
             text = r.read(500_000).decode("utf-8", "replace")
     except (OSError, ValueError):
-        return None
+        text = ""
     exact, rough = [], []
     for row in text.splitlines():
         if not row or row.startswith("#"):
@@ -2169,7 +2179,24 @@ def electrs_indexed_height(cfg):
         return max(exact)
     if rough:
         return max(rough)
-    return None
+
+    port = int(cfg.get("ELECTRS_PORT", 50001))
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
+            sock.sendall(b'{"jsonrpc":"2.0","id":0,'
+                         b'"method":"blockchain.headers.subscribe","params":[]}\n')
+            sock.settimeout(5)
+            raw = b""
+            while b"\n" not in raw and len(raw) < 65536:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                raw += chunk
+        answer = json.loads(raw.split(b"\n", 1)[0].decode("utf-8"))
+        height = int(answer["result"]["height"])
+        return height if height > 0 else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def collect_electrum(cfg, tip=None):
@@ -3771,11 +3798,13 @@ LAST_WRITTEN = {}
 def write_file_atomic(target_dir, filename, content):
     """Write to a temporary file first, then rename. That way the web server
     never sees a half-written page."""
-    if LAST_WRITTEN.get(filename) == content:
+    target = os.path.join(target_dir, filename)
+    # Unchanged content is not written again — unless the file is gone
+    # from disk (someone cleared the folder), then it comes back at once.
+    if LAST_WRITTEN.get(filename) == content and os.path.exists(target):
         return False
 
     os.makedirs(target_dir, exist_ok=True)
-    target = os.path.join(target_dir, filename)
     fd, temp = tempfile.mkstemp(dir=target_dir, prefix=".tmp-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -3792,7 +3821,8 @@ def write_file_atomic(target_dir, filename, content):
 
 def write_bytes_atomic(target_dir, filename, content):
     """The same for files that are not text — currently only the logo."""
-    if LAST_WRITTEN.get(filename) == content:
+    target = os.path.join(target_dir, filename)
+    if LAST_WRITTEN.get(filename) == content and os.path.exists(target):
         return False
     os.makedirs(target_dir, exist_ok=True)
     fd, temp = tempfile.mkstemp(dir=target_dir, prefix=".tmp-", suffix=".tmp")
@@ -3800,7 +3830,7 @@ def write_bytes_atomic(target_dir, filename, content):
         with os.fdopen(fd, "wb") as f:
             f.write(content)
         os.chmod(temp, 0o644)
-        os.replace(temp, os.path.join(target_dir, filename))
+        os.replace(temp, target)
     except BaseException:
         if os.path.exists(temp):
             os.unlink(temp)
@@ -3967,8 +3997,15 @@ def main():
             print("Hinweis:", error, file=sys.stderr)
         return 0
 
-    interval = max(5, int(cfg["INTERVAL"]))
-    log_step = max(1, min(interval, int(cfg.get("LOG_INTERVAL", 5))))
+    # A typo in the configuration must not turn into a restart loop.
+    try:
+        interval = max(5, int(cfg["INTERVAL"]))
+    except (TypeError, ValueError):
+        interval = 30
+    try:
+        log_step = max(1, min(interval, int(cfg.get("LOG_INTERVAL", 5))))
+    except (TypeError, ValueError):
+        log_step = 5
 
     # Two rhythms in one loop: query the node rarely, refresh the log often.
     # No second process, no concurrency.
@@ -3976,8 +4013,10 @@ def main():
     while True:
         try:
             if time.time() - last_full_pass >= interval:
-                one_pass(cfg)
+                # Stamp first: if the pass dies, the next attempt waits a
+                # full interval instead of hitting the node every log step.
                 last_full_pass = time.time()
+                one_pass(cfg)
             else:
                 write_log_text(cfg)
         except Exception as e:  # noqa: BLE001 — the service must never die

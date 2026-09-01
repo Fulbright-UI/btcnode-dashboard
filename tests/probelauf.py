@@ -93,6 +93,10 @@ def replace_system_parts(nd, case):
         path = str(path)
         if "thermal" in path:
             return "69634"
+        # The firmware's throttle flags via sysfs — the only route the
+        # service has, since PrivateDevices hides /dev/vchiq from vcgencmd.
+        if "get_throttled" in path:
+            return "0"
         if "onion" in path or "hostname" in path:
             return onion
         return real_read(path, default)
@@ -138,11 +142,16 @@ def replace_system_parts(nd, case):
     log = "\n".join(lines) + "\n" + log
 
     def run(command, *a, **k):
+        # vcgencmd fails inside the service: PrivateDevices=true hides
+        # /dev/vchiq. The mock fails the same way, so the page can only
+        # show the power supply if the sysfs route works.
+        if "vcgencmd" in " ".join(map(str, command)):
+            raise OSError("no /dev/vchiq in the sandbox")
+
         class Result:
             returncode = 0
             stderr = ""
-            stdout = (log if "journalctl" in " ".join(map(str, command))
-                      else "throttled=0x0")
+            stdout = log if "journalctl" in " ".join(map(str, command)) else ""
         return Result()
 
     nd.subprocess.run = run
@@ -1139,6 +1148,19 @@ def check_block_path(nd, cfg):
           "the time of the last block received is passed on")
 
 
+def check_power_supply(page):
+    """The power supply row must come from sysfs, not from vcgencmd.
+
+    On the Pi the row was missing from the first day: vcgencmd needs
+    /dev/vchiq, and the service runs with PrivateDevices=true. The mock
+    made the call succeed, so no test noticed (2026-09-01).
+    """
+    print("\n  Power supply")
+    text = re.sub(r"<[^>]+>", " ", page)
+    check("stabil" in text or "stable" in text,
+          "the power supply row is on the page, read from sysfs")
+
+
 def check_electrum_index(page, case):
     """The index bar of the Electrum card, against the mocked height."""
     print("\n  Electrum index")
@@ -1422,6 +1444,7 @@ def main():
         check_translation(nd)
         check_script_strings(nd)
         check_electrum_index(page, args.case)
+        check_power_supply(page)
         check_classes(page, nd, args.case)
         check_status(args.case)
         check_write_thrift(nd, cfg)

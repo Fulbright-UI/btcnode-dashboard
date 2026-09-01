@@ -297,6 +297,7 @@ RestartSec=10
 # The generator reads the node and writes files. It needs nothing else.
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
 ProtectKernelTunables=true
@@ -305,6 +306,18 @@ ProtectControlGroups=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 LockPersonality=true
+MemoryDenyWriteExecute=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+# The generator talks to bitcoind and electrs on this machine and to nothing
+# else. The kernel enforces that here; the code only promises it.
+IPAddressDeny=any
+IPAddressAllow=localhost
 ReadWritePaths=${WWW}
 
 [Install]
@@ -353,6 +366,10 @@ server {
     # Deliberately without gzip: on a local network the link is fast and the
     # CPU of a single-board computer is scarce.
     gzip off;
+
+    # Nothing that starts with a dot: the generator's temporary files
+    # (.tmp-…) sit in the same folder for a split second.
+    location ~ /\. { return 404; }
 
     location / { try_files \$uri \$uri/ =404; }
 
