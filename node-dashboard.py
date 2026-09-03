@@ -20,6 +20,7 @@ import json
 import math
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -29,7 +30,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "3.3"
+VERSION = "3.4"
 
 # ================================================================= Language ==
 # English is the source language: the code carries the English text, the table
@@ -126,6 +127,10 @@ DE = {
     "outbound": "davon ausgehend",
     "Version": "Version",
     "Node up for": "Node läuft seit",
+    "this node": "dieser Node",
+    "no reachable address announced": "keine erreichbare Adresse bekanntgegeben",
+    "Protocol": "Protokoll",
+    "Minimum relay fee": "Mindestgebühr zum Weiterleiten",
     "Transactions": "Transaktionen",
     "Memory use": "Speicher",
     "Minimum fee": "Mindestgebühr",
@@ -264,18 +269,27 @@ DE = {
     "The last block arrived {when} from {peer}":
         "Der letzte Block kam {when} von {peer}",
     "announced the last block first": "kündigte den letzten Block zuerst an",
-    "{ok} of {n} probes matched our height, {behind} behind, none ahead · last {when}":
-        "{ok} von {n} Stichproben bestätigen unsere Höhe, {behind} hinterher, keine voraus · zuletzt {when}",
+    "{ok} of {n} probes matched our height":
+        "{ok} von {n} Stichproben bestätigen unsere Höhe",
+    ", {behind} behind": ", {behind} hinterher",
+    ", none ahead": ", keine voraus",
+    "one claimed": "eine behauptete",
+    "{k} claimed": "{k} behaupteten",
+    ", {claim} up to {b} blocks more without delivering headers":
+        ", {claim} bis zu {b} Blöcke mehr, ohne Header zu liefern",
+    " · last {when}": " · zuletzt {when}",
     "{k} probes report up to {n} blocks more than we have":
         "{k} Stichproben melden bis zu {n} Blöcke mehr als wir",
-    "{ok} of {n} probes matched our height, {k} claimed up to {b} blocks more without delivering headers · last {when}":
-        "{ok} von {n} Stichproben bestätigen unsere Höhe, {k} behaupteten bis zu {b} Blöcke mehr, ohne Header zu liefern · zuletzt {when}",
     "Chain check: every few minutes Core asks a random node for its height. Last {when}":
         "Kettenabgleich: Core fragt alle paar Minuten einen zufälligen Knoten nach seiner Höhe. Zuletzt {when}",
     "Chain check: recent probes report {n} blocks more":
         "Kettenabgleich: die jüngsten Stichproben melden {n} Blöcke mehr",
     "Block {n} · announced {when} by {peer}": "Block {n} · angekündigt {when} von {peer}",
-    "peer {n} (no longer connected)": "Peer {n} (nicht mehr verbunden)",
+    "peer {n}": "Peer {n}",
+    "(no longer connected)": "(nicht mehr verbunden)",
+    "numbered peers are no longer connected": "nummerierte Peers sind nicht mehr verbunden",
+    "numbered peers are from before the restart, no longer connected":
+        "nummerierte Peers stammen aus der Zeit vor dem Neustart, nicht mehr verbunden",
     "first to announce, {total} blocks in 24 h: {parts}":
         "zuerst angekündigt, {total} Blöcke in 24 h: {parts}",
     "Electrum · local": "Electrum · lokal",
@@ -288,12 +302,39 @@ DE = {
     "Blocks to here": "Blöcke dorthin",
     "last {when}": "zuletzt {when}",
     "median fee in the last block": "Median-Gebühr im letzten Block",
-    "lowest fee in the last block": "niedrigste Gebühr im letzten Block",
-    "median {fee}": "Median {fee}",
-    "estimate for the next block: {fee}": "Schätzung nächster Block: {fee}",
+    "fee for the next block": "Gebühr für den nächsten Block",
+    "vs. a year ago · hashrate, curve since 2009": "zum Vorjahr · Hashrate, Kurve seit 2009",
+    "safe: {fee}": "sicher: {fee}",
     "Syncing the blockchain": "Synchronisiert die Blockchain",
     "of {n} bloecke": "von {n} Blöcken",
     "Node in sync, nothing unusual": "Node synchron, keine Auffälligkeiten",
+    "days": "Tage",
+    "Block {n} · {v} · {k} transactions": "Block {n} · {v} · {k} Transaktionen",
+    "Block {n} · {f} sat/vB": "Block {n} · {f} sat/vB",
+    "{hour}:00 · peak {c} °C": "{hour}:00 · Spitze {c} °C",
+    "email to Mike Hearn": "E-Mail an Mike Hearn",
+    "halving · about {date}": "Halbierung · ca. {date}",
+    "{n} blocks to go": "noch {n} Blöcke",
+    "fees waiting": "wartende Gebühren",
+    "energy · estimate at {j} J/TH": "Energie · Schätzung bei {j} J/TH",
+    "≈ {gw} GW · ≈ {twh} TWh a year · {share} % of the world's electricity":
+        "≈ {gw} GW · ≈ {twh} TWh im Jahr · {share} % des Weltstroms",
+    "electricity in comparison": "Strom im Vergleich",
+    "≈ {twh} TWh · {share} %": "≈ {twh} TWh · {share} %",
+    "air conditioning": "Klimaanlagen",
+    "data centres": "Rechenzentren",
+    "banking system": "Bankwesen",
+    "gold mining": "Goldförderung",
+    "{name}: ≈ {twh} TWh a year · {share} % of the world's electricity":
+        "{name}: ≈ {twh} TWh im Jahr · {share} % des Weltstroms",
+    "electricity a year, estimates · share of the world's ≈ {n} TWh (IEA 2024) · Bitcoin from difficulty at {j} J/TH · cooling IEA, data centres IEA 2024, banking and gold Galaxy Digital 2021":
+        "Strom im Jahr, Schätzungen · Anteil am Weltstrom von ≈ {n} TWh (IEA 2024) · Bitcoin aus der Schwierigkeit bei {j} J/TH · Klimaanlagen IEA, Rechenzentren IEA 2024, Bankwesen und Gold Galaxy Digital 2021",
+    "peak per hour · 24 h": "Spitze je Stunde · 24 h",
+    "Peak temperature per hour over the last 24 hours":
+        "Höchsttemperatur je Stunde der letzten 24 Stunden",
+    "up to 2 sat/vB": "bis 2 sat/vB",
+    "up to 5 sat/vB": "bis 5 sat/vB",
+    "above 5 sat/vB": "über 5 sat/vB",
     "Block · {age}": "Block · {age}",
     "Block height": "Blockhöhe",
     "about {remaining} left": "noch etwa {remaining}",
@@ -415,14 +456,16 @@ PROGRESS_LONG = []
 PROGRESS_LONG_STEP = 300
 PROGRESS_LONG_MAX = 144
 
-# Temperature history: one sample per minute, 120 points — the last hour.
-TEMP_HISTORY = []
-TEMP_STEP = 30
-TEMP_KEEP = 120
+# The current temperature, for the metrics tile.
+TEMP_NOW = [None]
 # A fixed scale instead of one that adapts: a calm line at 50 degrees should
 # also look calm. With a growing scale every bit of noise would look like a
 # spike.
 TEMP_LOW, TEMP_HIGH = 30.0, 90.0
+# The last day as one peak per clock hour, [(hour start, max)], 24 entries.
+# Lives in the process like every other history; a restart empties it and
+# the bars fill up again over the day (2026-09-03).
+TEMP_HOURLY = []
 
 HALVING_INTERVAL = 210_000   # the reward halves every 210,000 blocks
 RETARGET_INTERVAL = 2016     # difficulty is adjusted every 2016 blocks
@@ -433,10 +476,17 @@ RETARGET_INTERVAL = 2016     # difficulty is adjusted every 2016 blocks
 BLOCK_DATA = []      # (height, time, output_sat, fee_sat_vb, count)
 BLOCK_KEEP = 144     # roughly 24 hours
 
-# Difficulty of the recent adjustments. Read once from old block headers and
-# only appended to afterwards — it changes only every two weeks.
-DIFFICULTY = []      # (height, value)
-DIFFICULTY_KEEP = 16 # about half a year
+# Network hashrate since the genesis block for the curve behind the state
+# bar (Jakob, 2026-09-03: "price follows hashrate" — show it like a price
+# chart, and all of it). One point per difficulty period, plus the tip.
+# getnetworkhashps with a height parameter is answered from the headers
+# alone; the first fill is ~480 cheap calls, taken in portions so that no
+# single pass hangs, afterwards one call every two weeks. Fourteen orders of
+# magnitude between 2009 and now — the curve is drawn on a log scale.
+HASHRATE = []           # (height, hashes per second)
+HASHRATE_STEP = 2016    # blocks per point: one difficulty period
+HASHRATE_PER_PASS = 120
+HASHRATE_YEAR = 26      # periods in a year, for the ticker's change
 
 
 def record_long_progress(progress_fraction):
@@ -448,11 +498,15 @@ def record_long_progress(progress_fraction):
 
 
 def record_temperature(celsius):
-    """Keep the temperature history, at most one point per minute."""
+    """Keep the current value and the peak of every clock hour."""
     now = time.time()
-    if not TEMP_HISTORY or now - TEMP_HISTORY[-1][0] >= TEMP_STEP:
-        TEMP_HISTORY.append((now, celsius))
-        del TEMP_HISTORY[:-TEMP_KEEP]
+    TEMP_NOW[0] = celsius
+    hour = now - now % 3600
+    if TEMP_HOURLY and TEMP_HOURLY[-1][0] == hour:
+        TEMP_HOURLY[-1] = (hour, max(TEMP_HOURLY[-1][1], celsius))
+    else:
+        TEMP_HOURLY.append((hour, celsius))
+        del TEMP_HOURLY[:-24]
 
 
 def temperature_colour(celsius):
@@ -464,34 +518,6 @@ def temperature_colour(celsius):
     if celsius >= 60:
         return "var(--warn)"
     return "var(--akzent)"
-
-
-def build_temperature_curve(width=260, height=34):
-    """Small curve of the last hour, tinted by the current value."""
-    if len(TEMP_HISTORY) < 2:
-        return None
-    values = [c for _, c in TEMP_HISTORY]
-    colour = temperature_colour(values[-1])
-    margin = 2
-    inner_w, inner_h = width - 2 * margin, height - 2 * margin
-    span = TEMP_HIGH - TEMP_LOW
-
-    points = []
-    for i, c in enumerate(values):
-        x = margin + (i / max(1, len(values) - 1)) * inner_w
-        fraction = min(1.0, max(0.0, (c - TEMP_LOW) / span))
-        y = margin + (1 - fraction) * inner_h
-        points.append(f"{x:.1f},{y:.1f}")
-    line = " ".join(points)
-    area = f"{margin},{height - margin} {line} {width - margin},{height - margin}"
-
-    return (f'<svg class=minikurve viewBox="0 0 {width} {height}" '
-            f'preserveAspectRatio="none" role="img" '
-            f'aria-label="{html_escape(t("Temperature over the last hour"))}">'
-            f'<polygon points="{area}" fill="{colour}" opacity=".13"/>'
-            f'<polyline points="{line}" fill="none" stroke="{colour}" '
-            f'stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>'
-            f"</svg>")
 
 
 def build_bar(fraction, level="", height=6):
@@ -515,56 +541,97 @@ def build_bar(fraction, level="", height=6):
     return (f'<span class="balken hoch{height}">'
             f'<svg viewBox="0 0 100 {height}" preserveAspectRatio="none" '
             f'role="img" aria-label="{width:.0f} %">'
-            f'<rect width="{width:.2f}" height="{height}" class="{cls}"/>'
+            f'<rect width="{width:.2f}" height="{height}" class="{cls}">'
+            f"<title>{width:.0f} %</title></rect>"
             f"</svg></span>")
 
 
-def build_columns(values, colour="var(--akzent)", label="", width=260, height=38):
-    """Small column chart. The scale always starts at zero."""
+def build_columns(values, colour="var(--akzent)", label="", width=260, height=38,
+                  colours=None, floor=0.0, ceiling=None, titles=None):
+    """Small column chart. The scale starts at zero unless told otherwise.
+
+    'colours' gives one colour per value and wins over 'colour'. 'floor'
+    and 'ceiling' fix the scale — the temperature bars run 30–90 °C, so
+    that a calm day looks calm and 45 against 55 is still a visible step.
+    'titles' puts one <title> per bar into the SVG: the browser shows it
+    on hover, no script needed (Jakob, 2026-09-03). Our own numbers only,
+    escaped anyway.
+    """
+    titles = titles or []
     values = [w for w in values if w is not None]
     if len(values) < 2:
         return None
-    highest = max(values) or 1
+    highest = ((ceiling if ceiling is not None else max(values)) - floor) or 1
     count = len(values)
     gap = 260 / count * 0.18
     column = (width - (count - 1) * gap) / count
 
     parts = []
     for i, w in enumerate(values):
-        h = max(0.8, (w / highest) * height)
+        h = max(0.8, ((w - floor) / highest) * height)
         x = i * (column + gap)
+        fill = colours[i] if colours else colour
+        tip = (f"<title>{html_escape(titles[i])}</title>" if i < len(titles) and titles[i] else "")
         parts.append(f'<rect x="{x:.2f}" y="{height - h:.2f}" '
-                     f'width="{column:.2f}" height="{h:.2f}" fill="{colour}"/>')
-    return (f'<svg class=minikurve viewBox="0 0 {width} {height}" '
+                     f'width="{column:.2f}" height="{h:.2f}" fill="{fill}">{tip}</rect>')
+    return (f'<svg class="minikurve saeulen" viewBox="0 0 {width} {height}" '
             f'preserveAspectRatio="none" role="img" '
             f'aria-label="{html_escape(label)}">{"".join(parts)}</svg>')
 
 
-def build_line(values, colour="var(--akzent)", label="",
-               width=260, height=38, ab_null=True):
-    """Small line chart with a filled area underneath."""
-    values = [w for w in values if w is not None]
-    if len(values) < 3:
-        return None
-    oben = max(values)
-    unten = 0.0 if ab_null else min(values)
-    span = (oben - unten) or 1
-    margin = 1.5
-    inner_w, inner_h = width - 2 * margin, height - 2 * margin
+# Fee tiers for the 24-hour bars (Jakob, 2026-09-03): up to 2 sat/vB green,
+# up to 5 yellow, above that block orange — red stays reserved for faults.
+FEE_TIERS = ((2, "gut", "var(--akzent)"), (5, "warn", "var(--warn)"),
+             (None, "teuer", "var(--block)"))
 
-    points = []
-    for i, w in enumerate(values):
-        x = margin + (i / max(1, len(values) - 1)) * inner_w
-        y = margin + (1 - (w - unten) / span) * inner_h
-        points.append(f"{x:.1f},{y:.1f}")
-    line = " ".join(points)
-    area = f"{margin},{height - margin} {line} {width - margin},{height - margin}"
-    return (f'<svg class=minikurve viewBox="0 0 {width} {height}" '
-            f'preserveAspectRatio="none" role="img" '
-            f'aria-label="{html_escape(label)}">'
-            f'<polygon points="{area}" fill="{colour}" opacity=".13"/>'
-            f'<polyline points="{line}" fill="none" stroke="{colour}" '
-            f'stroke-width="1.5" stroke-linejoin="round"/></svg>')
+
+def fee_tier(fee):
+    for limit, cls, colour in FEE_TIERS:
+        if limit is None or fee <= limit:
+            return cls, colour
+    return FEE_TIERS[-1][1:]
+
+
+def build_fee_columns(fees, heights=()):
+    """Average fee per block, one bar each, rounded to whole sat/vB and
+    tinted by tier, with the legend underneath. The line chart before it
+    (2026-09-01) hid how many blocks sat at the floor."""
+    pairs = [(h, f) for h, f in zip(heights, fees) if f is not None]
+    rounded = [max(0, round(f)) for _, f in pairs]
+    svg = build_columns(rounded, label=t("Average fee per block over the last 24 hours"),
+                        colours=[fee_tier(f)[1] for f in rounded],
+                        titles=[t("Block {n} · {f} sat/vB", n=format_number(h), f=decimal_sep(f"{f:.1f}"))
+                                for h, f in pairs])
+    if not svg:
+        return None
+    legend = "".join(
+        f'<span><i class="netzfarbe {cls}"></i>{html_escape(text)}</span>'
+        for cls, text in (("gut", t("up to 2 sat/vB")), ("warn", t("up to 5 sat/vB")),
+                          ("teuer", t("above 5 sat/vB"))))
+    return svg + f'<span class="peerlegende gebuehrenlegende">{legend}</span>'
+
+
+def build_temperature_columns():
+    """One bar per hour of the last day, the hour's peak, each in the colour
+    of its own value (Jakob, 2026-09-03). Twenty-four slots, oldest on the
+    left; after a restart the hours not yet measured stay empty on the
+    right. Fixed scale 30–90 °C like the curve before it, so a calm day
+    looks calm."""
+    if not TEMP_HOURLY:
+        return None
+    values = [c for _, c in TEMP_HOURLY]
+    titles = [t("{hour}:00 · peak {c} °C", hour=time.strftime("%H", time.localtime(h)),
+                c=decimal_sep(f"{c:.1f}")) for h, c in TEMP_HOURLY]
+    values += [None] * (24 - len(values))
+    # Hours not yet measured: a low stub in the frame colour, so that a
+    # single green bar after a restart reads as "filling up", not as a
+    # fault (Jakob's screenshot, 2026-09-03).
+    stub = TEMP_LOW + (TEMP_HIGH - TEMP_LOW) * 0.06
+    drawn = [c if c is not None else stub for c in values]
+    colours = [temperature_colour(c) if c is not None else "var(--randhell)"
+               for c in values]
+    return build_columns(drawn, label=t("Peak temperature per hour over the last 24 hours"),
+                         colours=colours, floor=TEMP_LOW, ceiling=TEMP_HIGH, titles=titles)
 
 
 def build_skeleton(label="", width=260, height=38, columns=False):
@@ -632,7 +699,7 @@ def fetch_block_data(cfg, tip):
         try:
             st = rpc(cfg, "getblockstats",
                      [height, ["height", "time", "total_out", "txs",
-                              "feerate_percentiles", "minfeerate"]])
+                              "feerate_percentiles"]])
         except RpcError:
             return          # not allowed or block missing — stop quietly
         percentiles = st.get("feerate_percentiles") or [0, 0, 0, 0, 0]
@@ -642,38 +709,87 @@ def fetch_block_data(cfg, tip):
             st.get("total_out", 0),
             percentiles[2],              # median fee in sat/vB
             st.get("txs", 0),
-            st.get("minfeerate", 0),     # cheapest fee that still got in
         ))
 
     BLOCK_DATA.sort(key=lambda e: e[0])
     del BLOCK_DATA[:-BLOCK_KEEP]
 
 
-def fetch_difficulty(cfg, tip):
-    """Read the difficulty of recent adjustments from old block headers.
+def hashrate_anchors(tip):
+    """The heights the curve is made of: every difficulty period from the
+    first, then the tip itself as the live point."""
+    fixed = list(range(HASHRATE_STEP, tip + 1, HASHRATE_STEP))
+    return fixed + ([tip] if tip not in fixed else [])
 
-    Needed only once: the values never change again, and a new adjustment
-    arrives only after roughly two weeks.
+
+def fetch_hashrate(cfg, tip):
+    """Fill the curve, HASHRATE_PER_PASS points per cycle, newest first so
+    that the ticker has its value right away. The tip point is replaced
+    whenever the tip moves; the period points never change. getnetworkhashps
+    is not in the whitelist of older installations: the first refusal ends
+    the fetch quietly, and the state bar simply has no curve.
     """
     if not tip:
         return
-    last = (tip // RETARGET_INTERVAL) * RETARGET_INTERVAL
-    present = {h for h, _ in DIFFICULTY}
-    wanted = [last - i * RETARGET_INTERVAL for i in range(DIFFICULTY_KEEP)]
-    missing = [h for h in wanted if h > 0 and h not in present]
-    if not missing:
-        return
-
-    for height in sorted(missing):
+    anchors = hashrate_anchors(tip)
+    keep = set(anchors)
+    HASHRATE[:] = [e for e in HASHRATE if e[0] in keep]
+    present = {h for h, _ in HASHRATE}
+    missing = [h for h in reversed(anchors) if h not in present][:HASHRATE_PER_PASS]
+    for height in missing:
+        window = HASHRATE_STEP if height % HASHRATE_STEP == 0 else height % HASHRATE_STEP or 1
         try:
-            block_id = rpc(cfg, "getblockhash", [height])
-            header = rpc(cfg, "getblockheader", [block_id])
+            rate = rpc(cfg, "getnetworkhashps", [window, height])
         except RpcError:
             return
-        DIFFICULTY.append((height, float(header.get("difficulty", 0))))
+        HASHRATE.append((height, float(rate)))
+    HASHRATE.sort(key=lambda e: e[0])
 
-    DIFFICULTY.sort(key=lambda e: e[0])
-    del DIFFICULTY[:-DIFFICULTY_KEEP]
+
+def hashrate_summary():
+    """(current H/s, change against a year ago as a fraction) or None.
+    The comparison point is HASHRATE_YEAR periods back; while the curve is
+    still filling from the tip downwards, the oldest point present."""
+    if len(HASHRATE) < 3:
+        return None
+    last = HASHRATE[-1][1]
+    ago = HASHRATE[max(0, len(HASHRATE) - 1 - HASHRATE_YEAR)][1]
+    return last, ((last - ago) / ago if ago else 0.0)
+
+
+def format_hashrate(hashes):
+    """900 EH/s style, one decimal below 100."""
+    for unit, size in (("EH/s", 1e18), ("PH/s", 1e15), ("TH/s", 1e12)):
+        if hashes >= size:
+            value = hashes / size
+            return decimal_sep(f"{value:.0f}" if value >= 100 else f"{value:.1f}") + f" {unit}"
+    return decimal_sep(f"{hashes / 1e9:.1f}") + " GH/s"
+
+
+def build_hashrate_chart(width=600, height=120):
+    """The curve behind the state bar: a line with a soft gradient below,
+    drawn like a price chart. Geometry in attributes, colour in classes —
+    the CSP forbids style attributes (see 2026-08-23)."""
+    values = [math.log10(v) for _, v in HASHRATE if v > 0]
+    if len(values) < 3:
+        return ""
+    lo, hi = min(values), max(values)
+    span = (hi - lo) or 1
+    pts = []
+    for i, v in enumerate(values):
+        x = i / (len(values) - 1) * width
+        y = height * 0.15 + (1 - (v - lo) / span) * height * 0.8
+        pts.append(f"{x:.1f},{y:.1f}")
+    line = " ".join(pts)
+    area = f"0,{height} {line} {width},{height}"
+    return (f'<svg class=hashkurve viewBox="0 0 {width} {height}" '
+            f'preserveAspectRatio="none" aria-hidden="true">'
+            '<defs><linearGradient id="hashverlauf" x1="0" y1="0" x2="0" y2="1">'
+            '<stop offset="0" class="hv0"></stop><stop offset="1" class="hv1"></stop>'
+            '</linearGradient></defs>'
+            f'<polygon points="{area}" fill="url(#hashverlauf)"/>'
+            f'<polyline points="{line}" fill="none" stroke-width="1.5" '
+            'stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>')
 
 
 def estimate_remaining(progress_fraction):
@@ -718,7 +834,7 @@ def read_config(path):
         "OUT_DIR": "/var/www/node",
         "DATA_DIR": "/mnt/bitcoin/bitcoin",
         "ELECTRS_PORT": "50001",
-        "INTERVAL": "30",
+        "INTERVAL": "21",   # 21/3 since 2026-09-03 (Jakob)
         # Display language of the page: de or en. Affects only what appears
         # in the browser — log lines come from the node and stay as they are.
         "LANGUAGE": "de",
@@ -727,12 +843,12 @@ def read_config(path):
         # it. More lines cost nothing but scrollback — journalctl does not
         # take longer for 150 than for 40.
         "LOG_LINES": "150",
-        "LOG_INTERVAL": "5",
+        "LOG_INTERVAL": "3",
         # Timeout per RPC call. 45 s instead of 15: bitcoind stalls its RPC
         # thread while it writes the dbcache.
         "RPC_TIMEOUT": "45",
         # This many failures in a row before the node counts as gone.
-        # 3 x 30 s = ninety seconds of silence, only then the red card.
+        # 3 x 21 s = a minute of silence, only then the red card.
         "TOLERANCE": "3",
         # Maximum number of dots in the network map. More is unreadable.
         "PEERS_MAX": "64",
@@ -883,6 +999,82 @@ def format_duration(seconds):
     return t("{n} min", n=minutes)
 
 
+# What the difficulty costs, as something one can picture (Jakob,
+# 2026-09-03). Hashrate from the difficulty (D · 2^32 hashes per block at
+# ten minutes), power from an assumed fleet efficiency — the generator never
+# goes online, so this is an estimate by construction and labelled as one.
+# 20 J/TH is a middle value for the 2025/26 fleet (S19 XP ≈ 21, S21 ≈ 17).
+FLEET_EFFICIENCY_J_PER_TH = 20
+# The bar at the foot of the 'Network' card: the world's electricity as
+# 100 %, Bitcoin drawn into it next to things people can place. Annual
+# figures, TWh, all published estimates — the sources and years stand
+# beside them, and the bar says "estimate" (Jakob, 2026-09-03).
+WORLD_ELECTRICITY_TWH = 30_000          # generation 2024, IEA
+ENERGY_PEERS = (
+    # key, TWh per year, colour class
+    ("cooling", 2_000, "e-kuehl"),      # space cooling, IEA (2022)
+    ("datacentres", 415, "e-rz"),       # data centres 2024, IEA Energy and AI
+    ("banking", 264, "e-bank"),         # banking system, Galaxy Digital 2021
+    ("gold", 240, "e-gold"),            # gold mining, Galaxy Digital 2021
+)
+ENERGY_LABELS = {
+    "cooling": lambda: t("air conditioning"),
+    "datacentres": lambda: t("data centres"),
+    "banking": lambda: t("banking system"),
+    "gold": lambda: t("gold mining"),
+}
+
+
+def bitcoin_power_gw(difficulty):
+    hashes_per_second = difficulty * 2 ** 32 / 600
+    return hashes_per_second * FLEET_EFFICIENCY_J_PER_TH / 1e12 / 1e9
+
+
+def energy_comparison(difficulty):
+    """'≈ 18 GW · ≈ 160 TWh a year · 0,53 % of the world's electricity' as
+    escaped markup for a 'grafik' slot — built here from numbers only,
+    nothing foreign goes in."""
+    gigawatt = bitcoin_power_gw(difficulty)
+    twh = gigawatt * 8.766
+    share = twh / WORLD_ELECTRICITY_TWH * 100
+    text = t("≈ {gw} GW · ≈ {twh} TWh a year · {share} % of the world's electricity",
+             gw=decimal_sep(f"{gigawatt:.1f}"), twh=format_number(round(twh)),
+             share=decimal_sep(f"{share:.2f}"))
+    return f"<span class=vergleich>{html_escape(text)}</span>"
+
+
+def build_energy_bar(difficulty, height=8):
+    """One row per figure, longest bar = largest figure, Bitcoin in block
+    orange, value and share of the world's electricity on the right. The
+    single 100 % bar before it (same evening) showed Bitcoin as a sliver
+    next to slivers — nothing to read off. Every bar carries its value as
+    <title> too."""
+    twh = bitcoin_power_gw(difficulty) * 8.766
+    rows = [("bitcoin", "Bitcoin", twh, "e-btc")] + [
+        (key, ENERGY_LABELS[key](), value, cls) for key, value, cls in ENERGY_PEERS]
+    rows.sort(key=lambda r: -r[2])
+    largest = rows[0][2] or 1
+    parts = []
+    for key, name, value, cls in rows:
+        share = value / WORLD_ELECTRICITY_TWH * 100
+        figure = t("≈ {twh} TWh · {share} %", twh=format_number(round(value)),
+                   share=decimal_sep(f"{share:.2f}"))
+        tip = t("{name}: ≈ {twh} TWh a year · {share} % of the world's electricity",
+                name=name, twh=format_number(round(value)), share=decimal_sep(f"{share:.2f}"))
+        w = value / largest * 100
+        parts.append(
+            f'<span class="ereihe {cls}"><span class=ename>{html_escape(name)}</span>'
+            f'<span class="balken hoch{height}"><svg viewBox="0 0 100 {height}" preserveAspectRatio="none" '
+            f'role="img" aria-label="{html_escape(tip)}"><rect width="{w:.2f}" height="{height}" class="balkenfuellung {cls}">'
+            f"<title>{html_escape(tip)}</title></rect></svg></span>"
+            f"<span class=ewert>{html_escape(figure)}</span></span>")
+    note = t("electricity a year, estimates · share of the world's ≈ {n} TWh (IEA 2024) · Bitcoin from difficulty at {j} J/TH · "
+             "cooling IEA, data centres IEA 2024, banking and gold Galaxy Digital 2021",
+             n=format_number(WORLD_ELECTRICITY_TWH), j=FLEET_EFFICIENCY_J_PER_TH)
+    return (f'<span class=energiereihen>{"".join(parts)}</span>'
+            f"<span class=energienotiz>{html_escape(note)}</span>")
+
+
 def format_magnitude(number):
     """126000000000000 -> 126.0 T — for the network difficulty.
 
@@ -921,6 +1113,105 @@ def halving_facts(height):
     # One block every ten minutes on average
     date = datetime.now(timezone.utc).astimezone().timestamp() + remaining * 600
     return reward, next_height, remaining, datetime.fromtimestamp(date)
+
+
+# ============================================================= Chronicle ===
+# A terminal line under the header, full width (Jakob, 2026-09-03): a
+# sentence from the early days — the cryptography mailing list, the P2P
+# Foundation thread, bitcointalk — typed into the page like a person types,
+# one quote per data cycle, so the animation never runs against the
+# refresh. A headline ticker with dates and prices lived on the right for
+# an hour the same night and was dropped again on Jakob's word.
+#
+# The texts are the English originals in both languages: they are
+# quotations, not interface. Short on purpose — one header line each, so
+# the longer ones are cut to their key sentence (2026-09-03).
+# Wording checked against satoshi.nakamotoinstitute.org on 2026-09-03.
+#
+# Translated fields are lambdas: t() must run after the language is set.
+#   (date, who, where, text)
+CHRONICLE_QUOTES = (
+    ("2008-10-31", "Satoshi Nakamoto", "Cryptography Mailing List",
+     "I've been working on a new electronic cash system that's fully peer-to-peer, with no trusted third party."),
+    ("2008-11-07", "Hal Finney", "Cryptography Mailing List",
+     "Bitcoin seems to be a very promising idea."),
+    ("2008-11-07", "Satoshi Nakamoto", "Cryptography Mailing List",
+     "Pure P2P networks like Gnutella and Tor seem to be holding their own."),
+    ("2008-11-08", "Satoshi Nakamoto", "Cryptography Mailing List",
+     "There will be deflation and early holders of money will see its value increase."),
+    ("2008-11-13", "Satoshi Nakamoto", "Cryptography Mailing List",
+     "The proof-of-work chain is a solution to the Byzantine Generals' Problem."),
+    ("2008-11-14", "Satoshi Nakamoto", "Cryptography Mailing List",
+     "I'm better with code than with words though."),
+    ("2009-01-09", "Satoshi Nakamoto", "Cryptography Mailing List",
+     "Total circulation will be 21,000,000 coins."),
+    ("2009-01-11", "Hal Finney", "Twitter",
+     "Running bitcoin"),
+    ("2009-01-16", "Satoshi Nakamoto", "Cryptography Mailing List",
+     "It might make sense just to get some in case it catches on."),
+    ("2009-02-11", "Satoshi Nakamoto", "P2P Foundation",
+     "The root problem with conventional currency is all the trust that's required to make it work."),
+    ("2009-02-11", "Satoshi Nakamoto", "P2P Foundation",
+     "They lend it out in waves of credit bubbles with barely a fraction in reserve."),
+    ("2010-02-06", "Satoshi Nakamoto", "bitcointalk",
+     "At most only 21 million coins for 6.8 billion people in the world."),
+    ("2010-02-14", "Satoshi Nakamoto", "bitcointalk",
+     "I'm sure that in 20 years there will either be very large transaction volume or no volume."),
+    ("2010-05-18", "Laszlo Hanyecz", "bitcointalk",
+     "I'll pay 10,000 bitcoins for a couple of pizzas."),
+    ("2010-06-17", "Satoshi Nakamoto", "bitcointalk",
+     "Once version 0.1 was released, the core design was set in stone for the rest of its lifetime."),
+    ("2010-06-21", "Satoshi Nakamoto", "bitcointalk",
+     "Lost coins only make everyone else's coins worth slightly more. Think of it as a donation to everyone."),
+    ("2010-07-05", "Satoshi Nakamoto", "bitcointalk",
+     "Writing a description for this thing for general audiences is bloody hard."),
+    ("2010-08-07", "Satoshi Nakamoto", "bitcointalk",
+     "Not having Bitcoin would be the net waste."),
+    ("2010-08-27", "Satoshi Nakamoto", "bitcointalk",
+     "Bitcoins have no dividend, therefore not like a stock. More like a collectible or commodity."),
+    ("2010-12-11", "Satoshi Nakamoto", "bitcointalk",
+     "WikiLeaks has kicked the hornet's nest, and the swarm is headed towards us."),
+    ("2011-04-23", "Satoshi Nakamoto", lambda: t("email to Mike Hearn"),
+     "I've moved on to other things. It's in good hands with Gavin and everyone."),
+    ("2013-03-19", "Hal Finney", "bitcointalk",
+     "I think I was the first person besides Satoshi to run bitcoin."),
+)
+
+def chronicle_date(iso):
+    y, m, d = iso.split("-")
+    return f"{d}.{m}.{y}" if LANGUAGE == "de" else iso
+
+
+def chronicle_entries():
+    """The quotes as the browser and the page use them."""
+    # zeile1 is the prompt — date, who, where — shown at once in orange;
+    # zeile2 the quote, typed after it, all in one flowing line (Jakob,
+    # 2026-09-03: like someone typing into a terminal, the prompt in front).
+    return [{"zeile1": f"<{chronicle_date(date)} {who} · {where() if callable(where) else where}>",
+             "zeile2": f" {text}"}
+            for date, who, where, text in CHRONICLE_QUOTES]
+
+
+def chronicle_text():
+    """chronik.json — written once at start, like stil.css."""
+    return json.dumps({"zitate": chronicle_entries()},
+                      ensure_ascii=False, separators=(",", ":"))
+
+
+def build_chronicle(interval):
+    """The two lines as the page carries them without JavaScript: entry
+    number (now // interval) — the same arithmetic dash.js uses, so a page
+    reload lands on the entry the animation would be at."""
+    quotes = chronicle_entries()
+    entry = quotes[int(time.time() // max(1, interval)) % len(quotes)]
+    # The line is centred on the page and sized by its content, so the
+    # typing grows out of the middle, symmetrical at every moment (Jakob,
+    # 2026-09-03). A hidden full-text 'schatten' used to fix the width in
+    # advance — dropped for exactly that reason.
+    return ('<div class=chronik id=chronik><div class="term zitat">'
+            f'<span class=tz1>{html_escape(entry["zeile1"])}</span>'
+            f'<span class=tz2>{html_escape(entry["zeile2"])}</span>'
+            "<span class=cursor></span></div></div>")
 
 
 def build_progress_curve(width=300, height=54):
@@ -1059,12 +1350,12 @@ def collect_system(cfg):
         record_temperature(temp)
         fields.append((t("Temperature"), decimal_sep(f"{temp:.1f} °C"),
                        "warn" if temp >= 75 else ""))
-        # After a service restart it takes a minute until two samples
-        # exist. Until then the skeleton stands here so the card does not
-        # change its height.
-        fields.append((t("last hour"),
-                       build_temperature_curve()
-                       or build_skeleton(t("Temperature history, still measuring")),
+        # One bar per hour, the hour's peak, 24 hours (Jakob, 2026-09-03).
+        # It replaced the one-hour curve; the first bar stands after the
+        # first sample, the rest fill in over the day.
+        fields.append((t("peak per hour · 24 h"),
+                       build_temperature_columns()
+                       or build_skeleton(t("Temperature history, still measuring"), columns=True),
                        "grafik"))
 
     # CPU use as a percentage, measured between two passes. The load average
@@ -1092,9 +1383,11 @@ def collect_system(cfg):
         )
 
     try:
-        s = os.statvfs(cfg["DATA_DIR"])
-        free = s.f_bavail * s.f_frsize
-        gesamt_platz = s.f_blocks * s.f_frsize
+        # shutil.disk_usage instead of os.statvfs: the test run also has to
+        # work on Windows, where statvfs does not exist (2026-09-03).
+        usage = shutil.disk_usage(cfg["DATA_DIR"])
+        free = usage.free
+        gesamt_platz = usage.total
         anteil_frei = free / gesamt_platz if gesamt_platz else 0
         used_fraction = 1 - anteil_frei
         if used_fraction >= 0.95:
@@ -1236,8 +1529,8 @@ def collect_node(cfg):
     # Only once the chain is up to date — during the initial sync the figures
     # would be from 2010 and fetching them a pure waste.
     if in_sync:
-        fetch_difficulty(cfg, headers)
         fetch_block_data(cfg, blocks)
+        fetch_hashrate(cfg, blocks)
 
     # Rate and remaining time are shown large in the state bar above.
     rate_text = eta_text = None
@@ -1247,50 +1540,24 @@ def collect_node(cfg):
             rate_text = t("{n} pp/h", n=decimal_sep(f"{per_hour:.2f}"))
             eta_text = format_duration(seconds_left)
 
-    # --- Network facts: halving and difficulty -------------------------------
-    reward, next_height, blocks_left, when = halving_facts(headers)
-    # Since 3.3 this is the right-hand column of the 'Network' card, next to
-    # the mempool. Halving on one line — height and month together — so
-    # both columns come out the same height (2026-09-01).
-    chain_fields = [
-        (t("Chain"), "", "spalte"),
-        (t("Block reward"), decimal_sep(f"{reward:.3f} BTC"), ""),
-        # Short on purpose: "Nächste Halbierung · bei 1.050.000 · 04/2028"
-        # wrapped in the inner column and pushed the chain side one row
-        # below the mempool side (seen on the Pi, 2026-09-01).
-        (t("Halving"),
-         f"{format_number(next_height)} · {when.strftime('%m/%Y')}", ""),
-        (t("remaining"), t("{n} bloecke", n=format_number(blocks_left)), ""),
-        (t("Difficulty"), format_magnitude(float(chain.get("difficulty", 0))), ""),
-    ]
-
+    # --- Network facts: difficulty and energy --------------------------------
+    # Cut down on 2026-09-03 (Jakob): the right-hand column of the 'Network'
+    # card keeps only the difficulty and the count to the next adjustment;
+    # reward and halving moved to the state bar, the adjustment history is
+    # gone. In its place a tangible comparison of what the difficulty costs.
+    difficulty = float(chain.get("difficulty", 0))
     # The count to the next adjustment is always known — it depends only on
     # the header height, not on the history buffer.
     retarget_left = RETARGET_INTERVAL - (headers % RETARGET_INTERVAL)
-    chain_fields.append(
-        (t("next adjustment"), t("in {n} blocks|dativ", n=format_number(retarget_left)), ""))
-
-    values = [w for _, w in DIFFICULTY]
-    if len(values) < 2:
-        # The history is fetched only after the sync has finished.
-        chain_fields.append((t("last adjustment"), "—", "leer"))
-        chain_fields.append(
-            (t("last adjustments"),
-             build_skeleton(t("Difficulty of the last adjustments"), columns=True),
-             "grafik"))
-    else:
-        change = (values[-1] / values[-2] - 1) * 100 if values[-2] else 0
-        chain_fields.append(
-            (t("last adjustment"),
-             decimal_sep(f"{change:+.1f} %"),
-             "warn" if abs(change) > 8 else "")
-        )
-        columns = build_columns(
-            values, "var(--leise)",
-            t("Difficulty of the last {n} adjustments", n=len(values)))
-        if columns:
-            chain_fields.append(
-                (t("last {n} adjustments", n=len(values)), columns, "grafik"))
+    chain_fields = [
+        (t("Chain"), "", "spalte"),
+        (t("Difficulty"), format_magnitude(difficulty), ""),
+        (t("next adjustment"), t("in {n} blocks|dativ", n=format_number(retarget_left)), ""),
+        (t("energy · estimate at {j} J/TH", j=FLEET_EFFICIENCY_J_PER_TH),
+         energy_comparison(difficulty), "grafik"),
+        # Across both columns, at the foot of the card (class "fuss").
+        (t("electricity in comparison"), build_energy_bar(difficulty), "fuss"),
+    ]
 
     net_fields = [
         (t("Connections"), str(verbindungen),
@@ -1303,49 +1570,42 @@ def collect_node(cfg):
 
     usage = int(mempool.get("usage", 0) or 0)
     max_usage = int(mempool.get("maxmempool", 0) or 0)
+    # Cut down on 2026-09-03 (Jakob): memory, the fees waiting, and the fill
+    # bar. Core does not know the value of the transactions in the mempool
+    # — only their fees (total_fee); summing the outputs would mean a call
+    # per transaction, tens of thousands every cycle.
+    fill = min(1.0, usage / max_usage) if max_usage else 0.0
     mempool_fields = [
         (t("Mempool"), "", "spalte"),
-        (t("Transactions"), format_number(mempool.get("size", 0)), ""),
         (t("Memory use"),
          (t("{used} of {total}", used=format_bytes(usage), total=format_bytes(max_usage))
           if max_usage else format_bytes(usage)),
          ""),
-        (t("Minimum fee"),
-         decimal_sep(f"{mempool.get('mempoolminfee', 0) * 100000:.1f} sat/vB"), ""),
+        (t("fees waiting"), format_btc(float(mempool.get("total_fee", 0) or 0) * 100_000_000), ""),
+        # Once it fills up, the minimum fee rises and cheap transactions
+        # are dropped. Yellow from 80 %.
+        (t("fill level"), build_bar(fill, "warn" if fill >= 0.8 else ""), "grafik"),
     ]
 
     # Fee estimates only once the chain is up to date. During the sync Core
-    # reliably answers "no data" — three calls for an answer we already know.
-    # At twelve seconds per call that is a third of the whole cycle.
-    fee_fields = []
-    # Raw estimates in sat/vB, keyed by target — the metrics bar shows the
-    # first one large. Kept apart from the display fields so nobody has to
-    # parse "4,1 sat/vB" back into a number (2026-09-01).
+    # reliably answers "no data" — a call for an answer we already know.
+    # Raw estimates in sat/vB — the metrics bar shows them. Kept as numbers
+    # so nobody has to parse "4,1 sat/vB" back (2026-09-01). The 6- and
+    # 24-block targets left with the card rows on 2026-09-03.
     fee_rates = {}
     if in_sync:
-        for target, label in ((1, "next block"), (6, "in ~1 hour"),
-                                  (24, "in ~4 hours")):
+        # 'economical' since 2026-09-03: what is enough to get in, not what
+        # is safe under any circumstances. Core's default 'conservative'
+        # adds a margin for a fee market that could turn — that is the
+        # number for the small print ("safe"), keyed as "sicher".
+        for key, mode in ((1, "economical"), ("sicher", "conservative")):
             try:
-                response = rpc(cfg, "estimatesmartfee", [target])
+                response = rpc(cfg, "estimatesmartfee", [1, mode])
             except RpcError:
                 break
             rate = response.get("feerate")
             if rate:
-                fee_rates[target] = float(rate) * 100000
-                fee_fields.append(
-                    (t(label),
-                     decimal_sep(f"{fee_rates[target]:.1f} sat/vB"), "")
-                )
-    if not fee_fields:
-        fee_fields = [
-            (t("Estimate"), t("not available during sync"), "leer")]
-    # How full the mempool is against maxmempool — once it fills up, the
-    # minimum fee rises and cheap transactions are dropped. Yellow from 80 %.
-    if max_usage:
-        fill = min(1.0, usage / max_usage)
-        fee_fields.append((t("fill level"),
-                           build_bar(fill, "warn" if fill >= 0.8 else ""),
-                           "grafik"))
+                fee_rates[key] = float(rate) * 100000
 
     summary = {
         "bloecke": blocks,
@@ -1354,13 +1614,10 @@ def collect_node(cfg):
         "verbindungen": int(verbindungen),
         "mempool": int(mempool.get("size", 0)),
         "gebuehren": fee_rates,
-        # Fees of the most recent block, from getblockstats: what actually
-        # got in last time, not what Core guesses for next time (2026-09-01).
-        # Since 2026-09-03 the tile shows the minimum large — the cheapest
-        # rate that still made it is the number you pay when you are not in
-        # a hurry; the median stays as small print.
+        # The median fee of the most recent block, from getblockstats. Was
+        # the tile's large number from 2026-09-01 to 2026-09-03; now only
+        # a fallback while Core has no estimate yet.
         "median_gebuehr": (BLOCK_DATA[-1][3] if in_sync and BLOCK_DATA else None),
-        "min_gebuehr": (BLOCK_DATA[-1][5] if in_sync and BLOCK_DATA else None),
         "rueckstand": behind,
         "belegt": chain.get("size_on_disk", 0),
         "tempo": rate_text,
@@ -1369,6 +1626,23 @@ def collect_node(cfg):
         "gepruned": bool(chain.get("pruned")),
         "version": str(net.get("subversion", "")).strip("/"),
         "laufzeit": laufzeit,
+        # How this node looks from the other side — what a peer's getpeerinfo
+        # would say about us. Shown in the detail box when pointing at the
+        # hub (Jakob, 2026-09-03). Pure structure, dash.js sets it via
+        # textContent like everything else in that box.
+        "eigen": {
+            "version": str(net.get("subversion", "")).strip("/"),
+            "protokoll": net.get("protocolversion"),
+            "dienste": ", ".join(net.get("localservicesnames") or []),
+            "dauer_s": laufzeit,
+            "eingehend": net.get("connections_in"),
+            "ausgehend": net.get("connections_out"),
+            "adressen": [
+                f'{a.get("address", "")}:{a.get("port", "")}'
+                for a in (net.get("localaddresses") or []) if a.get("address")
+            ],
+            "relay": float(net.get("relayfee", 0) or 0) * 100000,
+        },
         # Fallback for the 'Connected nodes' card while getpeerinfo is not
         # allowed. Without it the connection figures would be nowhere to be
         # seen until then.
@@ -1403,7 +1677,10 @@ def collect_node(cfg):
              t("{n} · {h} h", n=len(BLOCK_DATA), h=f"{hours:.0f}"), ""),
             (t("Volume per block"),
              build_columns(outputs, "var(--akzent)",
-                          t("Volume moved per block over the last 24 hours")),
+                          t("Volume moved per block over the last 24 hours"),
+                          titles=[t("Block {n} · {v} · {k} transactions", n=format_number(e[0]),
+                                    v=format_btc(e[2]), k=format_number(e[4]))
+                                  for e in BLOCK_DATA]),
              "grafik"),
         ]
 
@@ -1419,8 +1696,7 @@ def collect_node(cfg):
                von=f"{min(known) if known else 0:.0f}",
                bis=f"{max(known) if known else 0:.0f}"), ""),
             (t("average fee per block"),
-             build_line(fees, "var(--warn)",
-                        t("Average fee per block over the last 24 hours")),
+             build_fee_columns(fees, [e[0] for e in BLOCK_DATA]),
              "grafik"),
         ]
         fee_fields_24 = [f for f in fee_fields_24 if f[1]]
@@ -1431,7 +1707,7 @@ def collect_node(cfg):
     # — instead of two narrow cards. Together with 'System' that makes two
     # equal cards in the row (2026-09-01).
     groups = [
-        ("Network", mempool_fields + fee_fields + chain_fields),
+        ("Network", mempool_fields + chain_fields),
         ("Volume · 24 hours", volume_fields, volume_note),
         ("Fee history · 24 hours", fee_fields_24, fee_note),
     ]
@@ -1544,6 +1820,19 @@ ANNOUNCE_LINE = re.compile(
     r"Saw new (?:cmpctblock )?header hash=\S+ height=(\d+)\S* .*?peer=(\d+)")
 JOURNAL_TIME = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+\-]\d{2}:\d{2})")
 ANNOUNCED_PRIMED = [False]
+# Core numbers its peers from zero at every start. An announcement from
+# before the last restart therefore names a peer id that a stranger of
+# today may carry again — 13 minutes after a restart the ranking showed
+# "peer 310 × 44", and a new peer 310 would have inherited those 44
+# (2026-09-03). The start line marks the boundary; whatever was announced
+# before it is kept in the count but never matched to a connected peer.
+#   Bitcoin Core version v31.1.0 (release build)
+NODE_START = [0.0]
+START_LINE = re.compile(r"Bitcoin Core version v?\d")
+
+
+def before_restart(when):
+    return when < NODE_START[0]
 
 # Chain check. Besides its regular peers Core opens a short-lived
 # block-relay-only connection every few minutes and asks a stranger for its
@@ -1590,6 +1879,10 @@ def collect_announcements(cfg):
             when = datetime.fromisoformat(stamp.group(1)).timestamp() if stamp else time.time()
         except ValueError:
             when = time.time()
+
+        if START_LINE.search(row):
+            NODE_START[0] = max(NODE_START[0], when)
+            continue
 
         match = ANNOUNCE_LINE.search(row)
         if match:
@@ -1674,20 +1967,26 @@ def chain_check_markup(kz):
     # chain as we did — behind is harmless, ahead is the alarm.
     behind = total - ok - sum(1 for d in dots if d == "voraus")
     claimed = total - ok - behind
+    cls = ""
     if alarm:
         sentence = t("{k} probes report up to {n} blocks more than we have", k=claimed, n=format_number(ahead))
         cls = " warn"
-    elif ahead:
-        # Claims without headers: keep the number visible, keep the tone calm.
-        sentence = t("{ok} of {n} probes matched our height, {k} claimed up to {b} blocks more "
-                     "without delivering headers · last {when}",
-                     ok=ok, n=total, k=claimed, b=format_number(ahead), when=last)
-        cls = ""
     else:
-        sentence = t("{ok} of {n} probes matched our height, {behind} behind, "
-                     "none ahead · last {when}",
-                     ok=ok, n=total, behind=behind, when=last)
-        cls = ""
+        # Assembled from pieces so that every sample is accounted for
+        # (23 + 1 of 26 left two unexplained, 2026-09-03) and the verb
+        # agrees with the count ("1 behaupteten").
+        sentence = t("{ok} of {n} probes matched our height", ok=ok, n=total)
+        if behind:
+            sentence += t(", {behind} behind", behind=behind)
+        if ahead:
+            # Claims without headers: keep the number visible, keep the tone calm.
+            claim = (t("one claimed") if claimed == 1
+                     else t("{k} claimed", k=claimed))
+            sentence += t(", {claim} up to {b} blocks more without delivering headers",
+                          claim=claim, b=format_number(ahead))
+        else:
+            sentence += t(", none ahead")
+        sentence += t(" · last {when}", when=last)
     marks = "".join(f'<i class="stich {d}"></i>' for d in dots[-12:])
     return (f'<span class="abgleich{cls}" title="{html_escape(t("Chain check: every few minutes Core asks a random node for its height. Last {when}", when=last))}">'
             f"<span class=stiche>{marks}</span>{html_escape(sentence)}</span>")
@@ -1717,26 +2016,37 @@ def announcer_of_tip(peers, kz):
     # last block" and must not be shown as such.
     if tip and height < tip - 1:
         return None, None, None, None
+    if before_restart(when):
+        return None, peer_id, height, when
     index = next((i for i, p in enumerate(peers) if p.get("id") == peer_id), None)
     return index, peer_id, height, when
+
+
+def peer_label(peers, peer_id, when):
+    """A connected peer by short address, anyone else by Core's id."""
+    if not before_restart(when):
+        p = next((p for p in peers if p.get("id") == peer_id), None)
+        if p:
+            return shorten_address(p["adresse"])
+    return t("peer {n}", n=peer_id)
 
 
 def announcer_ranking(peers, limit=3):
     """The peers that announced most blocks first in the last 24 hours.
 
-    Returns [(label, count)], connected peers by short address, others by
-    their Core peer id.
+    Returns [(label, count, gone)], connected peers by short address,
+    others by their Core peer id. The same id before and after a restart
+    is two different peers and counted apart.
     """
     counts = {}
-    for peer_id, _ in ANNOUNCED.values():
-        counts[peer_id] = counts.get(peer_id, 0) + 1
-    by_id = {p.get("id"): p for p in peers}
+    for peer_id, when in ANNOUNCED.values():
+        key = (peer_id, before_restart(when))
+        counts[key] = counts.get(key, 0) + 1
     ranking = []
-    for peer_id, n in sorted(counts.items(), key=lambda e: -e[1])[:limit]:
-        p = by_id.get(peer_id)
-        label = (shorten_address(p["adresse"]) if p
-                 else t("peer {n} (no longer connected)", n=peer_id))
-        ranking.append((label, n))
+    for (peer_id, old), n in sorted(counts.items(), key=lambda e: -e[1])[:limit]:
+        when = 0 if old else NODE_START[0]
+        label = peer_label(peers, peer_id, when)
+        ranking.append((label, n, label == t("peer {n}", n=peer_id), old))
     return ranking
 
 
@@ -1786,8 +2096,9 @@ def block_path_text(peers, kz):
         return t("The node that delivered the last block is no longer connected.")
 
     if ann_id is not None:
-        ann_name = (shorten_address(peers[ann_index]["adresse"])
-                    if ann_index is not None else t("peer {n} (no longer connected)", n=ann_id))
+        ann_name = peer_label(peers, ann_id, ann_when)
+        if ann_index is None:
+            ann_name += " " + t("(no longer connected)")
         when = format_age(time.time() - ann_when)
         head = t("Block {n} · announced {when} by {peer}", n=format_number(height),
                  when=when, peer=ann_name)
@@ -1809,9 +2120,17 @@ def ranking_text(peers):
     if not ranking:
         return ""
     total = len(ANNOUNCED)
-    parts = " · ".join(f"{label} × {n}" for label, n in ranking)
-    return t("first to announce, {total} blocks in 24 h: {parts}",
+    parts = " · ".join(f"{label} × {n}" for label, n, _, _ in ranking)
+    text = t("first to announce, {total} blocks in 24 h: {parts}",
              total=total, parts=parts)
+    # One note for all numbered entries instead of "(no longer connected)"
+    # three times in a row (2026-09-03). Announcements from before the
+    # restart say so — that is why they cannot be matched to a peer.
+    if any(gone for _, _, gone, _ in ranking):
+        text += " · " + (t("numbered peers are from before the restart, no longer connected")
+                         if all(old for _, _, gone, old in ranking if gone)
+                         else t("numbered peers are no longer connected"))
+    return text
 
 
 def collect_peers(cfg, limit):
@@ -1986,6 +2305,10 @@ PEER_CHAR_W = 0.63     # width of one character at that font size
 SPOKE = 104            # distance from hub to the inner end of the spoke
 
 
+MAP_ROWS_MIN = 8      # peers per side the frame always holds (16 in all)
+MAP_CHARS_MIN = 50    # "127.0.0.1:35824 · Tor · eingehend · 547 ms · 44,0 KB"
+
+
 def build_network_map(peers, kz=None):
     """A fan: our own node in the middle, the peers to the left and right.
 
@@ -2003,13 +2326,23 @@ def build_network_map(peers, kz=None):
 
     row_height = 30
     margin_top = 34
-    half = (len(peers) + 1) // 2
+    # A fixed frame: rows for MAP_ROWS_MIN peers per side and a label width
+    # for MAP_CHARS_MIN characters, whatever is connected right now. Before
+    # this every peer that came or went changed the viewBox, the rendered
+    # height with it, and the whole left column shifted — a restless page
+    # (Jakob, 2026-09-03). Beyond the frame the map still grows.
+    # Split evenly, left side first when odd; the frame's rows are the
+    # larger of that and the minimum. Both sides are centred in the frame
+    # (Jakob, 2026-09-03: "symmetrical wherever possible").
+    split = (len(peers) + 1) // 2
+    half = max(split, MAP_ROWS_MIN)
     height = margin_top * 2 + half * row_height
+    offset = {False: (half - split) / 2, True: (half - (len(peers) - split)) / 2}
 
     # The width follows from the longest label, not from a fixed value. An
     # SVG clips everything beyond its viewBox — with a fixed width the end of
     # the line disappeared for long addresses and three-digit second values.
-    longest = max(len(peer_line_text(p)) for p in peers)
+    longest = max(max(len(peer_line_text(p)) for p in peers), MAP_CHARS_MIN)
     label = longest * PEER_FONT * PEER_CHAR_W
     half_width = SPOKE + 14 + label + 26
     width = round(half_width * 2)
@@ -2022,8 +2355,8 @@ def build_network_map(peers, kz=None):
 
     parts = []
     for i, p in enumerate(peers):
-        rechts = i >= half
-        reihe = i - half if rechts else i
+        rechts = i >= split
+        reihe = (i - split if rechts else i) + offset[rechts]
         y = margin_top + reihe * row_height + row_height / 2
 
         if rechts:
@@ -2076,12 +2409,17 @@ def build_network_map(peers, kz=None):
 
     # The hub carries the Bitcoin mark, placed by its corner and scaled to
     # twice the desired radius.
+    # A group so that dash.js can hang the hover on it; the invisible circle
+    # gives it one shape to hit, image and label included.
     hub = (
+        '<g class="nabe" tabindex="0">'
+        f'<circle cx="{mx:.1f}" cy="{my:.1f}" r="{LOGO_R + 8}" class="nabefeld"/>'
         f'<image href="bitcoin.png?v={BITCOIN_V}" '
         f'x="{mx - LOGO_R:.1f}" y="{my - LOGO_R:.1f}" '
         f'width="{LOGO_R * 2}" height="{LOGO_R * 2}"/>'
         f'<text x="{mx:.1f}" y="{my + LOGO_R + 26:.1f}" class="eigentext" '
-        f'text-anchor="middle">dieser Node</text>'
+        f'text-anchor="middle">{html_escape(t("this node"))}</text>'
+        '</g>'
     )
 
     return (f'<svg class=netzkarte viewBox="0 0 {width:.0f} {height:.0f}" '
@@ -2549,24 +2887,27 @@ container-type:inline-size}
 
 /* ----------------------------------------------------------- Kopfzeile --- */
 header{display:flex;flex-wrap:wrap;gap:var(--e1) var(--e4);align-items:center;
-justify-content:space-between;padding-bottom:var(--e3);
-border-bottom:1px solid var(--rand)}
-h1{font-size:.95rem;font-weight:600;letter-spacing:-.01em;display:flex;
-align-items:center;gap:var(--e2)}
+padding-bottom:var(--e3);border-bottom:1px solid var(--rand)}
+/* One typeface and size across the header row — brand, quote, versions,
+   clock all in the mono at .73rem, on one baseline (Jakob, 2026-09-03). */
+h1{font-size:.73rem;font-family:var(--mono);font-weight:600;display:flex;
+align-items:center;gap:var(--e2);white-space:nowrap}
 h1 b{font-weight:400;color:var(--sehrleise);letter-spacing:0}
-.marke{width:.55rem;height:.55rem;border-radius:99px;background:var(--akzent);flex:none}
+.marke{width:1.15rem;height:1.15rem;flex:none;display:block}
 .kopfrechts{display:flex;align-items:center;gap:var(--e3);
 color:var(--sehrleise);font-size:.73rem;font-family:var(--mono)}
 /* Middle of the header: versions and uptime. Replaces the 'Updates' card —
    visible but quiet as long as everything is fine. */
 .kopfinfo{display:flex;align-items:center;gap:var(--e2);
 color:var(--leise);font-size:.73rem;font-family:var(--mono);
-margin-inline:auto;cursor:default}
+cursor:default;white-space:nowrap}
 .kopfinfo .kpunkt{width:.4rem;height:.4rem;border-radius:99px;flex:none;
 background:var(--akzent)}
 .kopfinfo.warn{color:var(--warn)}
 .kopfinfo.warn .kpunkt{background:var(--warn)}
-@media(max-width:60rem){.kopfinfo{order:3;flex-basis:100%;margin-inline:0}}
+@media(max-width:60rem){#z-kopf{order:3;flex-basis:100%;margin-left:0}
+.chronik{position:static;transform:none;order:4;flex:1 1 100%;max-width:100%}
+.term{margin-inline:auto}}
 /* The pulse shows that the page updates itself. Without JavaScript it
    simply stands still — which is more honest than blinking into the void. */
 .puls{width:.4rem;height:.4rem;border-radius:99px;background:var(--sehrleise);
@@ -2575,6 +2916,35 @@ transition:background .2s,box-shadow .2s}
 box-shadow:0 0 0 3px color-mix(in srgb,var(--akzent) 22%,transparent)}
 [data-frisch=alt] .puls{background:var(--warn);
 box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 22%,transparent)}
+
+/* ------------------------------------------------------------- Chronik --- */
+/* Two terminal lines under the header: a voice from the early days on the
+   left, a headline with the day's price on the right. Fixed height so the
+   typing never moves the page; the cursor blinks, the text is set by
+   dash.js via textContent, one entry per data cycle (2026-09-03). */
+/* In the header row, between brand and versions: two lines at most, fixed
+   height, so the typing never moves the row. */
+/* Brand left, versions and clock at the right edge (auto margin on the
+   ZONE wrapper #z-kopf, not on .kopfinfo inside it — there it did nothing,
+   2026-09-03). The quote is taken out of the flow and pinned to the page's
+   centre line: its box is as wide as the text typed so far, so it grows
+   out of the middle and is symmetrical at every moment. */
+header{position:relative}
+#z-kopf{margin-left:auto}
+.chronik{position:absolute;left:50%;top:0;transform:translateX(-50%);
+max-width:60%;min-width:0}
+.term{padding:0;font-family:var(--mono);font-size:.73rem;line-height:1.4;
+color:var(--text);height:1.4em;width:max-content;max-width:100%;
+overflow:hidden;white-space:nowrap;box-sizing:border-box}
+/* No box, no green: written straight into the header, white text, the
+   attribution muted (Jakob, 2026-09-03). */
+/* The prompt in a dark, quiet green — block orange was too loud up here
+   (Jakob, 2026-09-03). */
+.term.zitat .tz1{color:color-mix(in srgb,var(--akzent) 55%,var(--leise))}
+.term .tz2{color:var(--text)}
+.term .cursor::after{content:"▌";color:var(--akzent);animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+@media(prefers-reduced-motion:reduce){.term .cursor::after{animation:none}}
 
 /* -------------------------------------------------------- Zustandsleiste - */
 .zustand{background:var(--fl);border:1px solid var(--rand);
@@ -2589,6 +2959,21 @@ background:var(--akzent)}
 [data-stufe=fehler] .zustand::before{background:var(--fehler)}
 [data-stufe=veraltet] .zustand::before,
 [data-stufe=anlauf] .zustand::before{background:var(--warn)}
+/* Hashrate behind the bar, drawn like a price chart: a thin line and a
+   gradient that fades out towards the bottom. Kept faint on purpose — it is
+   a mood, the text above stays the message. Everything else in .zustand
+   gets position:relative so it paints above the curve. */
+.hashkurve{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.hashkurve polyline{stroke:var(--akzent);opacity:.55}
+.hv0{stop-color:var(--akzent);stop-opacity:.22}
+.hv1{stop-color:var(--akzent);stop-opacity:0}
+.zlinks,.zrechts,.balkenbox{position:relative}
+.zhash{margin-top:var(--e2);font-size:.76rem;color:var(--leise);
+font-family:var(--mono);font-variant-numeric:tabular-nums}
+.zhash b{color:var(--text);font-weight:600}
+.zdelta.gut{color:var(--akzent)}.zdelta.warn{color:var(--warn)}
+.zhashlabel{color:var(--sehrleise);font-family:var(--sans);text-transform:uppercase;
+letter-spacing:.1em;font-size:.62rem;margin-left:var(--e1)}
 .zlinks{display:flex;align-items:center;gap:var(--e3);min-width:0}
 .punkt{width:.62rem;height:.62rem;border-radius:99px;flex:none;background:var(--akzent);
 box-shadow:0 0 0 4px color-mix(in srgb,var(--akzent) 18%,transparent)}
@@ -2704,9 +3089,17 @@ color:var(--sehrleise);font-weight:600;min-height:var(--zeile);
 display:flex;align-items:center;border-bottom:1px solid var(--rand)}
 .spalte dl{flex:1}
 .spalte{display:flex;flex-direction:column;min-width:0}
-dt.grafiklabel{grid-column:1/-1;color:var(--sehrleise);font-size:.65rem;
+.grafiklabel{grid-column:1/-1;color:var(--sehrleise);font-size:.65rem;
 text-transform:uppercase;letter-spacing:.09em;align-items:flex-end;
 padding-bottom:var(--e1)}
+/* The card's foot: a graph after the last row, outside the list, so it can
+   grow with the card. In the wide cards it takes whatever the row's height
+   leaves over; elsewhere it keeps the graph's own height. */
+span.grafiklabel{display:flex;min-height:var(--zeile)}
+.grafikfuss{display:flex;flex-direction:column;justify-content:center;
+min-height:calc(var(--zeile) * 2)}
+.weit .grafikfuss{flex:1;min-height:calc(var(--zeile) * 3.2)}
+.weit .grafikfuss .minikurve{flex:1;height:auto}
 .minikurve{display:block;width:100%;height:calc(var(--zeile) * 1.6)}
 /* Skeleton instead of graph: dashed and muted so that nobody mistakes it
    for a measurement on any screenshot. */
@@ -2720,6 +3113,7 @@ padding-bottom:var(--e1)}
 overflow:hidden;line-height:0}
 .balken svg{display:block;width:100%;height:100%}
 .hoch6{height:6px}
+.hoch8{height:8px}
 .hoch10{height:10px}
 .balkenfuellung{fill:var(--akzent)}
 .balkenfuellung.warn{fill:var(--warn)}
@@ -2796,6 +3190,11 @@ gap:var(--e1) var(--e5)}
 /* No dashed halo around the hub any more: the mark carries itself, the ring
    was decoration and got in the way of the spokes. */
 
+/* The hub is hoverable like a peer: the detail box then shows this node as
+   its peers see it. The hit circle is invisible, only the label answers. */
+.nabe{cursor:pointer;outline:none}
+.nabefeld{fill:transparent}
+.nabe:hover .eigentext,.nabe:focus-visible .eigentext{fill:var(--text)}
 .eigentext{fill:var(--sehrleise);font-family:var(--sans);font-size:11px;
 letter-spacing:.09em;text-transform:uppercase}
 .peerlinie{stroke:var(--randhell);stroke-width:1;stroke-opacity:.55}
@@ -2840,14 +3239,42 @@ background:var(--leise)}
 .netzfarbe.onion{background:var(--netz-onion)}
 .netzfarbe.electrs{background:var(--netz-electrs)}
 .netzfarbe.i2p,.netzfarbe.cjdns{background:var(--netz-i2p)}
-/* The detail box has a fixed height. Otherwise the layout jumps every time
-   you point at a different dot, and that looks cheap. */
-/* Fixed minimum height. Without it the layout jumps every time you point at
-   a different row, and that looks cheap. */
+/* Fee tiers under the 24-hour bars, same dots as the map legend. */
+.netzfarbe.gut{background:var(--akzent)}
+.netzfarbe.warn{background:var(--warn)}
+.netzfarbe.teuer{background:var(--block)}
+.gebuehrenlegende{margin-top:var(--e1)}
+/* The energy comparison in the chain column: a sentence where the mempool
+   column has its bar, both rows the same height. */
+.vergleich{font-family:var(--mono);font-size:.78rem;color:var(--leise);
+line-height:1.4}
+/* Energy in comparison at the foot of the card: one row per figure —
+   name, bar relative to the largest, value. Bitcoin in block orange, the
+   rest muted. Pointing at a bar shows its value (<title>). */
+.energiereihen{display:grid;grid-template-columns:auto 1fr auto;gap:var(--e1) var(--e3);
+align-items:center;font-size:.78rem;margin-top:var(--e1)}
+.ereihe{display:contents}
+.ename{color:var(--leise);white-space:nowrap}
+.ereihe.e-btc .ename{color:var(--text)}
+.ewert{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:.76rem;
+color:var(--leise);white-space:nowrap;text-align:right}
+.ereihe.e-btc .ewert{color:var(--text)}
+.balkenfuellung.e-btc{fill:var(--block)}
+.balkenfuellung.e-kuehl,.balkenfuellung.e-rz,.balkenfuellung.e-bank,
+.balkenfuellung.e-gold{fill:var(--leise);opacity:.6}
+.energienotiz{display:block;margin-top:var(--e2);color:var(--sehrleise);font-size:.62rem;
+line-height:1.4}
+.balken svg rect:hover,.saeulen rect:hover{opacity:.75}
+/* The detail box has a FIXED height, not a minimum: the peer view (head,
+   address, two rows of details) is taller than the resting sentence, and
+   with min-height the box grew on every hover and pushed the log down
+   (Jakob, 2026-09-03). 7.4 rem holds the tallest view at the usual card
+   width; should a narrow screen wrap more, the box scrolls inside rather
+   than growing. */
 .peerdetail{background:var(--vertief);border:1px solid var(--rand);
-border-radius:var(--rad);padding:var(--e3);min-height:4.6rem;
-margin-top:var(--e3);display:flex;flex-wrap:wrap;align-items:center;
-gap:var(--e2) var(--e5)}
+border-radius:var(--rad);padding:var(--e3);height:7.4rem;overflow:auto;
+box-sizing:border-box;margin-top:var(--e3);display:flex;flex-wrap:wrap;
+align-items:center;align-content:center;gap:var(--e2) var(--e5)}
 .peerdetail .leer{color:var(--sehrleise);font-size:.76rem;line-height:1.6}
 /* The block sentence is the default content of the box and reads as a
    statement, not as a hint — hence the normal text colour. */
@@ -2980,6 +3407,7 @@ SCRIPT = r"""
   var takt = (Number(wurzel.dataset.intervall) || 30) * 1000;
   var logtakt = (Number(wurzel.dataset.logintervall) || 5) * 1000;
   var peers = [];
+  var eigen = null;            // this node as its peers see it
   var gemerkt = null;          // pinned peer, survives the refresh
   var blockweg = "";           // sentence about the last block's path
   var rangliste = "";          // who announced first most often, 24 h
@@ -3027,11 +3455,39 @@ SCRIPT = r"""
     return s + " s";
   }
 
+  function zeigeEigen(kasten) {
+    /* The hub: this node as the others see it — the same rows a peer's
+       getpeerinfo would show about us. Every value is from our own
+       getnetworkinfo, set via textContent all the same. */
+    var kopf = document.createElement("div");
+    kopf.className = "pkopf";
+    var farbe = document.createElement("i");
+    farbe.className = "netzfarbe ansager";
+    kopf.appendChild(farbe);
+    var art = document.createElement("span");
+    art.textContent = T.dieser_node + " · " + eigen.eingehend + " " + T.eingehend
+      + " · " + eigen.ausgehend + " " + T.ausgehend;
+    kopf.appendChild(art);
+    kasten.appendChild(kopf);
+    var adr = document.createElement("div");
+    adr.className = "padresse";
+    adr.textContent = (eigen.adressen && eigen.adressen.length) ? eigen.adressen.join("  ") : T.keine_adresse;
+    kasten.appendChild(adr);
+    var dl = document.createElement("dl");
+    zeile(dl, T.kennung, eigen.version);
+    zeile(dl, T.protokoll, eigen.protokoll);
+    zeile(dl, T.dienste, eigen.dienste);
+    zeile(dl, T.laeuft, dauer(eigen.dauer_s));
+    zeile(dl, T.relay, komma(Number(eigen.relay).toFixed(2)) + " sat/vB");
+    kasten.appendChild(dl);
+  }
+
   function zeigePeer(nr) {
     var kasten = document.getElementById("peerdetail");
     if (!kasten) { return; }
     var p = peers[nr];
     kasten.textContent = "";
+    if (nr === "eigen" && eigen) { zeigeEigen(kasten); return; }
     if (!p) {
       var satz = document.createElement("p");
       satz.className = "blockweg";
@@ -3114,6 +3570,11 @@ SCRIPT = r"""
         if (gemerkt !== null) { g.setAttribute("data-aktiv", ""); }
       });
     });
+    var nabe = karte.querySelector(".nabe");
+    if (nabe) {
+      nabe.addEventListener("mouseenter", function () { zeigePeer("eigen"); });
+      nabe.addEventListener("focus", function () { zeigePeer("eigen"); });
+    }
     karte.addEventListener("mouseleave", function () {
       zeigePeer(gemerkt === null ? -1 : gemerkt);
     });
@@ -3151,6 +3612,7 @@ SCRIPT = r"""
     }
     setzeZone("z-weit", daten.zonen.weit);
     setzeZone("z-voll", daten.zonen.voll);
+    richteKopierknoepfe();
 
     var stempel = document.getElementById("stempel");
     if (stempel && daten.stempel) { stempel.textContent = daten.stempel; }
@@ -3163,15 +3625,22 @@ SCRIPT = r"""
 
     setzeZone("z-netz", daten.zonen.netz);
     peers = daten.peers || [];
+    eigen = daten.eigen || null;
     blockweg = daten.blockweg || "";
     rangliste = daten.rangliste || "";
     erzeugt = daten.erzeugt || 0;
     verdrahtePeers();
   }
 
+  var ersterAbruf = true;
   function holeStatus() {
     hole("status.json", false)
-      .then(nachtragen)
+      .then(function (daten) {
+        nachtragen(daten);
+        /* The chronicle advances with the data, never on its own clock —
+           the first fetch is covered by the load of chronik.json. */
+        if (ersterAbruf) { ersterAbruf = false; } else { chronikSchritt(); }
+      })
       .catch(function () { wurzel.dataset.frisch = "alt"; });
   }
 
@@ -3240,7 +3709,12 @@ SCRIPT = r"""
     });
   }
 
-  document.querySelectorAll(".kopierknopf").forEach(function (knopf) {
+  /* Wired after every update, not once: setzeZone replaces the Electrum
+     card's markup on the first fetch, and the fresh buttons had neither a
+     listener nor the 'bereit' class — the page on the Pi showed no copy
+     button at all, while the test page (no fetch) did (2026-09-03). */
+  function richteKopierknoepfe() {
+  document.querySelectorAll(".kopierknopf:not(.bereit)").forEach(function (knopf) {
     knopf.addEventListener("click", function () {
       inZwischenablage(knopf.dataset.wert).then(function () {
         knopf.classList.add("fertig");
@@ -3258,6 +3732,61 @@ SCRIPT = r"""
     });
     knopf.classList.add("bereit");
   });
+  }
+  richteKopierknoepfe();
+
+  /* The chronicle: chronik.json is fetched once; entry number
+     floor(now / takt) — the same arithmetic as the generator's — so the
+     page and the animation agree, and a reload continues where it was. One
+     quote per data cycle, typed like a person types: the cursor sits where
+     the writing is, now and then a wrong key, a short stop, backspace, the
+     right one (Jakob, 2026-09-03). Text goes in via textContent only. */
+  var chronik = null, tippTimer = null;
+  var NACHBARN = { a: "s", s: "d", d: "f", e: "r", r: "t", t: "y", i: "o", o: "p",
+                   n: "m", m: "n", h: "j", u: "i", l: "k", c: "v", w: "e", g: "h" };
+  function tippe(kasten, eintrag) {
+    var z1 = kasten.querySelector(".tz1"), z2 = kasten.querySelector(".tz2"),
+        cursor = kasten.querySelector(".cursor");
+    if (!z1 || !z2 || !cursor) { return; }
+    if (tippTimer) { clearTimeout(tippTimer); tippTimer = null; }
+    /* The prompt (date, who, where) stands at once; only the quote is typed. */
+    z1.textContent = eintrag.zeile1 || ""; z2.textContent = "";
+    z2.after(cursor);
+    var text1 = "", text2 = eintrag.zeile2 || "";
+    var gesamt = text1.length + text2.length || 1;
+    var schritt = Math.max(14, Math.min(48, Math.floor(takt * 0.6 / gesamt)));
+    var i = 0, fehler = null;
+    function ziel() { return i < text1.length ? z1 : z2; }
+    function weiter() {
+      var feld = ziel(), rest = (feld === z1 ? text1 : text2), k = (feld === z1 ? i : i - text1.length);
+      if (k >= rest.length) { return; }
+      var soll = rest.charAt(k), pause = schritt * (0.7 + Math.random() * 0.6);
+      if (fehler === "tippen") {
+        /* Notice the slip, stop briefly, take it back. */
+        feld.textContent = feld.textContent.slice(0, -1);
+        fehler = null; pause = schritt * 2;
+      } else {
+        var daneben = NACHBARN[soll];
+        if (daneben && Math.random() < 0.035 && k > 0) {
+          feld.textContent += daneben; fehler = "tippen"; pause = schritt * 5;
+        } else {
+          feld.textContent += soll; i += 1;
+          if (soll === "." || soll === "," || soll === "—" || soll === ";") { pause = schritt * 6; }
+        }
+      }
+      tippTimer = setTimeout(weiter, pause);
+    }
+    weiter();
+  }
+  function chronikSchritt() {
+    if (!chronik || !chronik.zitate.length) { return; }
+    var n = Math.floor(Date.now() / takt);
+    var zitat = document.querySelector(".term.zitat");
+    if (zitat) { tippe(zitat, chronik.zitate[n % chronik.zitate.length]); }
+  }
+  hole("chronik.json", false).then(function (c) {
+    if (c && c.zitate) { chronik = c; chronikSchritt(); }
+  }).catch(function () { });
 
   /* Fetch once immediately on the first run: the page is already complete
      server-side, but the peer details for the detail box exist only in
@@ -3322,6 +3851,12 @@ def script_text():
         "tag": t(" d|kurz"),
         "std": t(" h|kurz"),
         "min": t(" min|kurz"),
+        # The hub: this node as its peers see it (2026-09-03).
+        "dieser_node": t("this node"),
+        "keine_adresse": t("no reachable address announced"),
+        "protokoll": t("Protocol"),
+        "laeuft": t("Node up for"),
+        "relay": t("Minimum relay fee"),
     }
     return (SCRIPT
             .replace("__TEXTE__", json.dumps(strings, ensure_ascii=False))
@@ -3421,7 +3956,7 @@ def render_card(group, extra_class=""):
     # A field of class "spalte" opens an inner column; its label is the
     # column's small heading. Rows before the first such field would be
     # lost, so a card either uses columns throughout or not at all.
-    rows, copy_fields = [], []
+    rows, copy_fields, feet = [], [], []
     columns = []          # [(heading, [row markup])]
     for entry in fields:
         label, value = entry[0], entry[1]
@@ -3429,6 +3964,12 @@ def render_card(group, extra_class=""):
         if cls == "spalte":
             columns.append((label, []))
             rows = columns[-1][1]
+            continue
+        if cls == "fuss":
+            # A graph under both inner columns, full card width. Same rule
+            # as "grafik": the value is SVG this program built, unescaped.
+            feet.append(f"<span class=grafiklabel>{html_escape(label)}</span>"
+                        f"<div class=grafikfuss>{value}</div>")
             continue
         if cls == "kopier":
             copy_fields.append((label, value))
@@ -3454,8 +3995,24 @@ def render_card(group, extra_class=""):
             parts.append(f"<div class=spalte><h3>{html_escape(heading)}</h3>"
                          f"<dl>{''.join(column_rows)}</dl></div>")
         parts.append("</div>")
+        parts.extend(feet)
     elif rows:
-        parts.append("<dl>" + "".join(rows) + "</dl>")
+        # A graph that ends the card leaves the list and becomes the card's
+        # foot: as a flex child it can take the height the grid gives the
+        # card, where a grid row cannot — the wide cards showed 40 px of
+        # nothing under their graphs (2026-09-03).
+        # Not in cards with copy fields: there the list and the copy block
+        # sit side by side, and a third child breaks the row — the Electrum
+        # card's bar stretched across, the addresses fell below (03.09.2026).
+        foot = ""
+        if rows[-1].startswith("<dd class=grafik>") and not copy_fields:
+            foot = "<div class=grafikfuss>" + rows.pop()[len("<dd class=grafik>"):-len("</dd>")] + "</div>"
+            if rows and rows[-1].startswith("<dt class=grafiklabel>"):
+                label = rows.pop()[len("<dt class=grafiklabel>"):-len("</dt>")]
+                foot = f"<span class=grafiklabel>{label}</span>" + foot
+        if rows:
+            parts.append("<dl>" + "".join(rows) + "</dl>")
+        parts.append(foot)
     if copy_fields:
         parts.append("<div class=kopierblock>")
         for label, value in copy_fields:
@@ -3493,7 +4050,22 @@ def build_metrics_bar(kz, level):
     # The first tile replaced the 'Blockchain' card: two figures to compare
     # — what the node has verified and what the network knows — with the
     # space taken on disk in small print underneath.
-    if kz.get("kopfzeilen"):
+    height = kz.get("kopfzeilen")
+    if height and level != "sync":
+        # Once the chain is up to date the comparison says nothing any more
+        # (965.371 of 965.371) — the tile carries the halving instead
+        # (Jakob, 2026-09-03). Whole days, no clock: at ten minutes a block
+        # the date drifts by weeks, and a countdown to the minute would
+        # only pretend otherwise.
+        _, _, blocks_left, when = halving_facts(height)
+        days = max(0, round(blocks_left * 600 / 86400))
+        pattern = "%d.%m.%Y" if LANGUAGE == "de" else "%Y-%m-%d"
+        tiles.append((
+            f'{format_number(days)}<span class=kvon>{html_escape(t("days"))}</span>',
+            t("halving · about {date}", date=when.strftime(pattern)), "",
+            t("{n} blocks to go", n=format_number(blocks_left)), True,
+        ))
+    elif height:
         # Only the space used. The verification state already stands in the
         # state bar above and need not be repeated here.
         extra = t("{n} on disk", n=format_bytes(kz.get("belegt", 0)))
@@ -3508,28 +4080,31 @@ def build_metrics_bar(kz, level):
 
     fees = kz.get("gebuehren") or {}
     median = kz.get("median_gebuehr")
-    lowest = kz.get("min_gebuehr")
     if level == "sync":
         tiles.append((format_number(kz.get("rueckstand", 0)),
                         t("bloecke rueckstand"), "", "", False))
-    elif median is not None:
+    elif fees.get(1):
         # The fee to enter with a transaction — the one number you want
         # without looking for it. It took the mempool tile's place on
         # 2026-09-01; the count is still in the 'Mempool & fees' card.
-        # Shown large is the lowest rate that still got into the last block
-        # (Jakob, 2026-09-03: "the fee I have to pay to get in", not the
-        # median). Median and Core's estimate for the next block go
-        # underneath in small print for comparison.
-        parts = [t("median {fee}", fee=decimal_sep(f"{median:.1f}"))]
-        if fees.get(1):
-            parts.append(t("estimate for the next block: {fee}",
-                           fee=decimal_sep(f"{fees[1]:.1f}")))
-        big = lowest if lowest is not None else median
-        label = t("lowest fee in the last block") if lowest is not None \
-            else t("median fee in the last block")
+        # Large: Core's economical estimate for the next block — enough to
+        # get in without overpaying (Jakob, 2026-09-03). Small: the
+        # conservative estimate, for when it must not fail.
+        # Hidden when both estimates round to the same figure — "3,0" under
+        # "3,0" carries nothing (2026-09-03).
+        extra = ""
+        safe = fees.get("sicher")
+        if safe and f"{safe:.1f}" != f"{fees[1]:.1f}":
+            extra = t("safe: {fee}", fee=decimal_sep(f"{safe:.1f}"))
         tiles.append((
-            decimal_sep(f"{big:.1f}") + "<span class=kvon>sat/vB</span>",
-            label, "gut", " · ".join(parts), True))
+            decimal_sep(f"{fees[1]:.1f}") + "<span class=kvon>sat/vB</span>",
+            t("fee for the next block"), "gut", extra, True))
+    elif median is not None:
+        # No estimate yet (Core needs a few blocks after a restart) — the
+        # last block's median bridges the gap.
+        tiles.append((
+            decimal_sep(f"{median:.1f}") + "<span class=kvon>sat/vB</span>",
+            t("median fee in the last block"), "gut", "", True))
     elif kz.get("mempool") is not None:
         tiles.append((format_number(kz["mempool"]), t("in the mempool"),
                         "", "", False))
@@ -3539,8 +4114,8 @@ def build_metrics_bar(kz, level):
         tiles.append((str(verbindungen), t("Connections"),
                         "warn" if verbindungen < 8 else "gut", "", False))
 
-    if TEMP_HISTORY:
-        temp = TEMP_HISTORY[-1][1]
+    if TEMP_NOW[0] is not None:
+        temp = TEMP_NOW[0]
         kind = "warn" if temp >= 75 else ("" if temp >= 60 else "gut")
         tiles.append((decimal_sep(f"{temp:.1f} °C"), t("Temperature"),
                         kind, "", False))
@@ -3576,6 +4151,11 @@ def format_percent(value, digits=2):
 def build_state_bar(level, word, extra, progress, kz):
     parts = ["<section class=zustand>"]
     percent = format_percent(progress)
+    # The hashrate curve runs behind the whole bar like a ticker — only
+    # once the chain is up to date, and only if the node allows the call.
+    hashrate = hashrate_summary() if level != "sync" else None
+    if hashrate:
+        parts.append(build_hashrate_chart())
 
     if level == "sync":
         subline = t("Syncing the blockchain")
@@ -3603,10 +4183,17 @@ def build_state_bar(level, word, extra, progress, kz):
         right_label = html_escape(
             t("Block · {age}", age=format_age(age)) if age is not None
             else t("Block height"))
-
+    ticker = ""
+    if hashrate:
+        rate, change = hashrate
+        sign = "+" if change >= 0 else "−"
+        ticker = (f'<div class=zhash><b>{html_escape(format_hashrate(rate))}</b> '
+                  f'<span class="zdelta {"gut" if change >= 0 else "warn"}">'
+                  f'{sign}{decimal_sep(f"{abs(change) * 100:.1f}")}&nbsp;%</span> '
+                  f'<span class=zhashlabel>{html_escape(t("vs. a year ago · hashrate, curve since 2009"))}</span></div>')
     parts.append(
         f'<div class=zrechts><div class=zzahl>{right_number}</div>'
-        f'<div class=zlabel>{right_label}</div></div>'
+        f'<div class=zlabel>{right_label}</div>{ticker}</div>'
     )
 
     if level == "sync":
@@ -3743,7 +4330,7 @@ def raster_spalten(count):
 
 
 def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None,
-                       in_sync=True):
+                       in_sync=True, sentences=("", "")):
     """The whole network card as a finished block: graph, legend, detail box.
 
     Without peer data — 'getpeerinfo' is not allowed until 06-tor.sh has run —
@@ -3803,8 +4390,8 @@ def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None,
         f"<div class=peerlegende>{legend}"
         "</div>"
         '<div class=peerdetail id=peerdetail>'
-        f"<p class=blockweg>{html_escape(block_path_text(peers, kz))}</p>"
-        f"<p class=blockweg>{html_escape(ranking_text(peers))}</p>"
+        f"<p class=blockweg>{html_escape(sentences[0])}</p>"
+        f"<p class=blockweg>{html_escape(sentences[1])}</p>"
         f"<p class=leer>{html_escape(t('Point at a line for identifier, dienste and connection time.'))}</p>"
         "</div></section>"
     )
@@ -3884,6 +4471,7 @@ def build_zones(cfg, progress, in_sync, groups, error=None,
                                           stale_for, warming_up,
                                           [chain_check_warning(kz) if in_sync else None])
 
+    sentences = (block_path_text(peers or [], kz), ranking_text(peers or []))
     narrow = [g for g in groups
               if g[1] and g[0] not in CARDS_WIDE and g[0] not in CARDS_FULL]
     narrow.sort(key=lambda g: CARD_ORDER.index(g[0])
@@ -3899,7 +4487,12 @@ def build_zones(cfg, progress, in_sync, groups, error=None,
         "stoerung": build_trouble(error, stale_for, warming_up, tor),
         "band": build_metrics_bar(kz, level),
         "netz": build_network_zone(peers or [], kz.get("netzfelder"),
-                              "getpeerinfo" in DENIED, kz, in_sync),
+                              "getpeerinfo" in DENIED, kz, in_sync, sentences),
+        # Built once, used in the page and in status.json: the two used to
+        # be computed twice, and across a second boundary "vor 43 s" met
+        # "vor 44 s" (flaky test, 2026-09-03).
+        "blockweg": sentences[0],
+        "rangliste": sentences[1],
         "spalten": raster_spalten(len(narrow)),
         "raster": "".join(render_card(g) for g in narrow),
         "weit": "".join(render_card(g) for g in wide),
@@ -3913,7 +4506,7 @@ def build_page(cfg, progress, in_sync, groups, error=None,
     now = datetime.now(timezone.utc).astimezone()
     hostname = html_escape(socket.gethostname())
     interval = html_escape(cfg["INTERVAL"])
-    log_step = html_escape(str(cfg.get("LOG_INTERVAL", "5")))
+    log_step = html_escape(str(cfg.get("LOG_INTERVAL", "3")))
 
     if zones is None:
         zones = build_zones(cfg, progress, in_sync, groups, error,
@@ -3964,8 +4557,14 @@ def build_page(cfg, progress, in_sync, groups, error=None,
         # corner, taken for a design choice (2026-09-01).
         f"<title>{html_escape(title)}</title>",
         "</head><body><div class=huelle>",
-        f'<header><h1><span class=marke></span>{hostname} '
-        f"<b>· Bitcoin Fullnode</b></h1>",
+        # The brand mark is the same logo the network map's hub carries
+        # (Jakob, 2026-09-03), not a green dot.
+        f'<header><h1><img class=marke src="bitcoin.png?v={BITCOIN_V}" alt="">{hostname} '
+        f"<b>· BTC Fullnode</b></h1>"
+        # The chronicle sits in the header row itself, right after the
+        # brand, and takes the width between brand and versions — no
+        # second row, the header stays as flat as it can (Jakob, 2026-09-03).
+        + build_chronicle(int(cfg.get("INTERVAL", 21))) +
         f'<div id=z-kopf>{zones["kopf"]}</div>',
         f'<div class=kopfrechts><span class=puls></span>'
         f'<span id=stempel>{now.strftime(TIME_FORMAT[LANGUAGE])}</span></div>'
@@ -4087,10 +4686,11 @@ def build_status(cfg, zones, peers, now, stale_for=None, progress=0.0,
             "voll": zones["voll"],
         },
         "peers": schlanke_peers,
+        "eigen": (summary or {}).get("eigen"),
         # The sentence for the detail box, ready made: dash.js sets it via
         # textContent and does not rebuild it from the peer list.
-        "blockweg": block_path_text(peers or [], summary or {}),
-        "rangliste": ranking_text(peers or []),
+        "blockweg": zones["blockweg"],
+        "rangliste": zones["rangliste"],
     }, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -4157,6 +4757,7 @@ def write_assets(cfg):
     """
     write_file_atomic(cfg["OUT_DIR"], "stil.css", STYLE)
     write_file_atomic(cfg["OUT_DIR"], "dash.js", script_text())
+    write_file_atomic(cfg["OUT_DIR"], "chronik.json", chronicle_text())
     write_bytes_atomic(cfg["OUT_DIR"], "bitcoin.png", BITCOIN_PNG)
 
     # Left over from version 2.x: back then the log sat in a frame as a page
@@ -4309,7 +4910,7 @@ def main():
     except (TypeError, ValueError):
         interval = 30
     try:
-        log_step = max(1, min(interval, int(cfg.get("LOG_INTERVAL", 5))))
+        log_step = max(1, min(interval, int(cfg.get("LOG_INTERVAL", 3))))
     except (TypeError, ValueError):
         log_step = 5
 

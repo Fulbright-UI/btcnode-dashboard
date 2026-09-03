@@ -37,14 +37,24 @@ danach; ändern lässt es sich später mit einer Zeile in der Konfiguration.
   Knoten nach seiner Höhe — die Abwehr gegen eine untergeschobene Kette. Die
   Stichproben der letzten Stunde stehen als Punktreihe im Kopf der Netzkarte;
   meldet ein Knoten mehr Blöcke als du hast, erscheint oben eine Meldung
-- **Systemzustand** des Rechners: Temperatur mit Stundenverlauf, Auslastung,
-  Arbeitsspeicher, Plattenplatz — bei einem Raspberry Pi auch die
-  Stromversorgung, weil Unterspannung die häufigste Ursache beschädigter
+- **Ein Satz aus den frühen Tagen** in der Kopfzeile, getippt wie in ein
+  Terminal — Cryptography-Mailingliste, P2P Foundation, bitcointalk —, ein
+  Zitat je Datenabruf, Wortlaut gegen das Nakamoto Institute geprüft
+- **Systemzustand** des Rechners: die Temperatur des Tages als ein Balken je
+  Stunde, CPU, Arbeitsspeicher, Plattenplatz — bei einem Raspberry Pi auch
+  die Stromversorgung, weil Unterspannung die häufigste Ursache beschädigter
   Blockchain-Daten ist
-- **Die Gebühr, die man nehmen sollte**: der Median des letzten Blocks, groß
-  im Kopf, darunter zum Vergleich die Schätzung von Core für den nächsten
-- **Mempool und Gebühren**, Blockbelohnung, nächste Halbierung, Schwierigkeit
-- **Volumen und Gebührenverlauf** der letzten 24 Stunden
+- **Die Gebühr, die man nehmen sollte**: Cores sparsame Schätzung für den
+  nächsten Block, groß im Kopf, darunter die vorsichtige, wenn sie abweicht
+- **Tage bis zur Halbierung**, mit Datum und den Blöcken, die noch fehlen
+- **Mempool** (Speicher, wartende Gebühren, Füllstand) und **Kette**
+  (Schwierigkeit, nächste Anpassung), dazu eine Schätzung, wie viel Strom
+  die Schwierigkeit bedeutet — aus der Hashrate bei angenommener
+  Flotteneffizienz, als Balken neben Klimaanlagen, Rechenzentren, Bankwesen
+  und Goldförderung
+- **Volumen und Gebührenverlauf** der letzten 24 Stunden, ein Balken je
+  Block, Gebühren nach Stufe gefärbt; jeder Balken der Seite zeigt beim
+  Zeigen seinen Wert
 - **Electrum-Server**, falls einer läuft, mit den Adressen für die Wallet,
   einem Kopierknopf daneben und einem Balken, wie weit sein Index ist
 - **Protokoll** des Nodes, mitlaufend — angenommene Blöcke orange, ihre
@@ -129,7 +139,7 @@ Stelle für eigene Ergänzungen:
 
 ```
 rpcauth=dashboard:<salz>$<pruefsumme>
-rpcwhitelist=dashboard:getblockchaininfo,getnetworkinfo,getmempoolinfo,getconnectioncount,uptime,estimatesmartfee,getblockstats,getblockhash,getblockheader,getpeerinfo
+rpcwhitelist=dashboard:getblockchaininfo,getnetworkinfo,getmempoolinfo,getconnectioncount,uptime,estimatesmartfee,getblockstats,getblockhash,getblockheader,getpeerinfo,getnetworkhashps
 rpcwhitelistdefault=0
 ```
 
@@ -205,6 +215,7 @@ Erzeugt werden:
 | Datei | Takt | Inhalt |
 |---|---|---|
 | `index.html` | 30 s | vollständige Seite |
+| `chronik.json` | einmalig | die Zitate für die Kopfzeile |
 | `status.json` | 30 s | dieselben Bausteine plus Peers als reine Struktur |
 | `log.txt` | 5 s | Journalzeilen, reiner Text, ohne jedes Markup |
 | `stil.css`, `dash.js` | einmalig | ändern sich nur beim Programmtausch |

@@ -90,8 +90,14 @@ def answer(method, params):
                 "mediantime": int(time.time()) - 900}
 
     if method == "getnetworkinfo":
+        # Field names and shapes as Core 31 reports them; the onion address
+        # has the real length (56 characters plus .onion) and is invented.
         return {"connections": 10, "connections_in": 0, "connections_out": 10,
-                "subversion": "/Satoshi:31.1.0/", "localaddresses": [],
+                "subversion": "/Satoshi:31.1.0/", "protocolversion": 70016,
+                "localservicesnames": ["NETWORK", "WITNESS", "NETWORK_LIMITED", "P2P_V2"],
+                "relayfee": 0.00001,
+                "localaddresses": [{"address": "attrappe" * 7 + ".onion",
+                                    "port": 8333, "score": 4}],
                 "networks": []}
 
     if method == "getmempoolinfo":
@@ -99,7 +105,8 @@ def answer(method, params):
             return {"size": 0, "usage": 0, "bytes": 0, "maxmempool": 300_000_000,
                     "mempoolminfee": 0.00001}
         return {"size": 41233, "usage": 198_800_000, "bytes": 61_000_000,
-                "maxmempool": 300_000_000, "mempoolminfee": 0.0000122}
+                "maxmempool": 300_000_000, "mempoolminfee": 0.0000122,
+                "total_fee": 0.42137}
 
     if method == "getconnectioncount":
         return 10
@@ -111,8 +118,21 @@ def answer(method, params):
         if CASE == "sync":
             return {"errors": ["Insufficient data or no feerate found"]}
         target = p[0] if p else 6
-        return {"feerate": {1: 0.000041, 6: 0.000023, 24: 0.000015}.get(target, 0.00002),
-                "blocks": target}
+        mode = p[1] if len(p) > 1 else "conservative"
+        # Core's conservative estimate sits above the economical one — the
+        # tile shows both, so the mock must tell them apart.
+        table = ({1: 0.000041, 6: 0.000023, 24: 0.000015} if mode == "conservative"
+                 else {1: 0.000028, 6: 0.000017, 24: 0.000011})
+        return {"feerate": table.get(target, 0.00002), "blocks": target}
+
+    if method == "getnetworkhashps":
+        # Hashrate at a past height, in H/s: from a few megahash at the
+        # start to about 900 EH/s at the tip, exponential like the real
+        # thing, with some wobble. Deterministic in the height so repeated
+        # passes agree.
+        height = p[1] if len(p) > 1 and p[1] not in (None, -1) else TIP
+        exponent = 6.8 + 14.15 * min(1.0, height / 965_000)
+        return 10 ** exponent * (1 + 0.08 * math.sin(height / 5000.0))
 
     if method == "getpeerinfo":
         if CASE == "leer":

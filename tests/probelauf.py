@@ -152,6 +152,12 @@ def replace_system_parts(nd, case):
         ours = 915312 - sum(1 for k in range(60) if (59 - k) * 600 + 40 < ago)
         lines.append(sample.format(ts=ts, h=ours - (3000 if i == 4 else 0),
                                    p=800 + i))
+    # A restart three hours ago. Everything announced before it carries
+    # peer ids from the previous run: peer 104 of then is not the peer 104
+    # of now, and the ranking must keep them apart (2026-09-03).
+    ts = stamp(3 * 3600 + 100)
+    ts = ts[:-2] + ":" + ts[-2:]
+    lines.append(f"{ts} btcnode bitcoind[62345]: Bitcoin Core version v31.1.0 (release build)")
     log = "\n".join(lines) + "\n" + log
 
     def run(command, *a, **k):
@@ -180,12 +186,12 @@ def replace_system_parts(nd, case):
     (hwmon / "hwmon1" / "in0_lcrit_alarm").write_text("0\n")
     nd.HWMON_DIR = str(hwmon)
 
-    # One hour of temperature history so the curve has something to draw
+    # Eighteen hours of hourly peaks, so the bars have something to draw
+    # and six slots on the right stay empty — the shape after a restart.
     now = time.time()
-    for i in range(90):
-        nd.TEMP_HISTORY.append(
-            (now - (90 - i) * nd.TEMP_STEP, 56 + 13 * (i / 89) + 1.6 * math.sin(i / 3))
-        )
+    for i in range(18):
+        hour = (now - now % 3600) - (17 - i) * 3600
+        nd.TEMP_HOURLY.append((hour, 48 + 14 * (i / 17) + 3 * math.sin(i / 2)))
 
     # And a progress history, so that rate and remaining time actually get a
     # value. Without it 'tempo' stays None, the test took the else branch, and
@@ -504,7 +510,7 @@ def check_numbers(page, case, language="de"):
         return f"{n:,}".replace(",", sep)
 
     expected = {
-        "synchron": {"blocks": 915312, "connections": 10, "mempool": 41233},
+        "synchron": {"blocks": 915312, "connections": 10},
         "sync":     {"blocks": 350328, "headers": 963634, "connections": 10},
         "leer":     {},
     }[case]
@@ -517,16 +523,16 @@ def check_numbers(page, case, language="de"):
               f"{name} = {grouped(value)} appears on the page",
               f"mock sent {value}")
 
-    # The block reward follows from the height and is the value that exposed
-    # the bug: at the genesis block it is 50 BTC, and that is exactly what a
-    # failed read produces.
-    if case in ("synchron", "sync"):
-        tip = expected.get("headers", expected["blocks"])
-        halvings = tip // 210000
-        reward = f"{50 / (2 ** halvings):.3f}".replace(".", "," if language == "de" else ".")
-        check(reward in plain,
-              f"block reward {reward} BTC matches height {tip}",
-              "50,000 BTC would mean the height was read as 0")
+    # The blocks to the halving follow from the height and are the value
+    # that exposed the bug: a failed read gives height 0, and then the
+    # count reads 210.000. Shown in the state bar since 2026-09-03 (the
+    # reward row is gone); during the sync the bar has no room for it.
+    if case == "synchron":
+        tip = expected["blocks"]
+        to_go = grouped((tip // 210000 + 1) * 210000 - tip)
+        check(to_go in plain,
+              f"blocks to the halving {to_go} match height {tip}",
+              "210.000 would mean the height was read as 0")
         check("50,000 BTC" not in plain and "50.000 BTC" not in plain,
               "no genesis reward on the page")
 
@@ -731,8 +737,10 @@ def check_page(page, case, nd=None, language="de"):
 
     if case != "synchron":
         print("\n  Placeholders")
+        # Two: volume and fees. The difficulty history left with its card
+        # rows on 2026-09-03.
         skeletons = re.findall(r'class="minikurve geruest"', page)
-        check(len(skeletons) >= 3,
+        check(len(skeletons) >= 2,
               f"skeleton instead of graph where data is missing ({len(skeletons)})")
 
         # The most important point: no invented numbers. The cards without
@@ -860,6 +868,32 @@ def check_page(page, case, nd=None, language="de"):
     # network over http:// — without a fallback the button would do nothing.
     check("execCommand" in script_raw and "isSecureContext" in script_raw,
           "with a fallback, because http:// has no clipboard interface")
+    # The chronicle: one static file, two lists, plain text only; the page
+    # carries one entry of each without JavaScript, dash.js fetches the
+    # file and types the entries (2026-09-03).
+    print("\n  Chronicle")
+    chron = json.loads((OUTPUT / "chronik.json").read_text(encoding="utf-8"))
+    check(len(chron.get("zitate", [])) >= 20,
+          f"chronik.json carries {len(chron.get('zitate', []))} quotes")
+    flat = json.dumps(chron, ensure_ascii=False)
+    # The prompt is written <date who · where> like a terminal — angle
+    # brackets as text, never a tag (set via textContent, escaped server-side).
+    check(re.search(r"<[a-zA-Z/!]", flat) is None, "no markup in the chronicle")
+    check("&lt;" in page.split("</header>")[0], "the prompt's brackets reach the page escaped")
+    check(all(len(e["zeile2"]) <= 200 for e in chron["zitate"]), "quotes stay short")
+    check(re.search(r'<header><h1>.*?</h1><div class=chronik id=chronik><div class="term zitat">.*?<div id=z-kopf>', page, re.S) is not None,
+          "the terminal sits in the header row, between brand and versions")
+    check('"chronik.json"' in script_raw and "chronikSchritt();" in script_raw.split("function holeStatus")[1].split("function holeProtokoll")[0],
+          "dash.js fetches the chronicle and advances it with the data cycle")
+    check(".after(cursor)" in script_raw and "NACHBARN" in script_raw,
+          "the cursor follows the writing, slips get corrected")
+
+    # The buttons are wired once at load AND after every update: the first
+    # fetch replaces the card's markup, and unwired buttons stay hidden —
+    # the Pi showed none for a day (2026-09-03).
+    wired = script_raw.count("richteKopierknoepfe();")
+    check(wired >= 2 and "richteKopierknoepfe();" in script_raw.split("function nachtragen")[1].split("function ", 1)[0],
+          "and wired again inside nachtragen, after the zones are replaced", str(wired))
 
     print("\n  Number formatting")
     # Version numbers are not decimals — "31.1.0" stays as it is.
@@ -1151,8 +1185,13 @@ def check_block_path(nd, cfg):
     check(sources == 0 and receivers == 0,
           "neither deliverer nor receivers are marked on the map any more")
     ranking = data.get("rangliste", "")
-    check("× 40" in ranking and "999" in ranking,
-          "the 24 h ranking counts announcements, gone peers by id", ranking)
+    # Peer 104 announced 40 blocks — 27 before the restart, 13 since. Only
+    # the 13 belong to the connected peer 104; the 27 stand under its number.
+    check("× 27" in ranking and "× 13" in ranking and "× 40" not in ranking,
+          "the same peer id before and after the restart is counted apart", ranking)
+    note = "Neustart" if nd.LANGUAGE == "de" else "restart"
+    check(note in ranking and ranking.count("(") == 0,
+          "one note for the numbered peers, not one per entry", ranking)
     word = "angekündigt" if nd.LANGUAGE == "de" else "announced"
     check(word in data.get("blockweg", ""), "the sentence names the announcer")
 
@@ -1233,22 +1272,58 @@ def check_electrum_index(page, case):
 
 
 def check_fee_tile(nd):
-    """The fee tile shows the cheapest rate that got into the last block
-    large (2026-09-03), the median and Core's estimate small underneath."""
+    """The fee tile shows Core's economical estimate for the next block
+    large (2026-09-03), the conservative one small underneath."""
     print("\n  Fee tile")
     page = (OUTPUT / "index.html").read_text(encoding="utf-8")
-    label = "niedrigste Gebühr im letzten Block" if nd.LANGUAGE == "de" else "lowest fee in the last block"
+    label = "Gebühr für den nächsten Block" if nd.LANGUAGE == "de" else "fee for the next block"
     tile = re.search(r'<div class="kachel[^"]*"><div class=kwert>([\d,.]+)<span class=kvon>sat/vB</span></div>'
                      r'<div class=klabel>([^<]*)</div><div class=kzusatz>([^<]*)</div>', page)
-    check(tile is not None and tile.group(2) == label, "the tile is labelled with the lowest fee",
+    check(tile is not None and tile.group(2) == label, "the tile is labelled as the next-block fee",
           tile.group(2) if tile else "no tile")
-    lowest = nd.BLOCK_DATA[-1][5]
-    median = nd.BLOCK_DATA[-1][3]
-    check(tile is not None and tile.group(1) == nd.decimal_sep(f"{lowest:.1f}"),
-          f"the large number is the block's minfeerate ({lowest})", tile.group(1) if tile else "")
-    check(tile is not None and nd.decimal_sep(f"{median:.1f}") in tile.group(3)
-          and ("Median" in tile.group(3) or "median" in tile.group(3)),
-          "the median stays in the small print", tile.group(3) if tile else "")
+    # The mock answers 2.8 to 'economical' and 4.1 to 'conservative'.
+    check(tile is not None and tile.group(1) == nd.decimal_sep("2.8"),
+          "the large number is the economical estimate", tile.group(1) if tile else "")
+    check(tile is not None and nd.decimal_sep("4.1") in tile.group(3),
+          "the conservative estimate stays in the small print", tile.group(3) if tile else "")
+
+
+def check_hashrate(nd):
+    """The hashrate curve behind the state bar and its ticker line."""
+    print("\n  Hashrate")
+    page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+    tip = nd.HASHRATE[-1][0] if nd.HASHRATE else 0
+    wanted = len(nd.hashrate_anchors(tip))
+    check(nd.HASHRATE and len(nd.HASHRATE) == wanted and nd.HASHRATE[0][0] == nd.HASHRATE_STEP,
+          f"every difficulty period since genesis is present ({wanted} points)", str(len(nd.HASHRATE)))
+    check(nd.HASHRATE and nd.HASHRATE[-1][1] / nd.HASHRATE[0][1] > 1e10,
+          "the mock spans ten orders of magnitude or more, so the log scale matters")
+    bar = re.search(r"<section class=zustand>.*?</section>", page, re.S)
+    check(bar is not None and '<svg class=hashkurve' in bar.group(0),
+          "the curve is drawn inside the state bar")
+    check(bar is not None and 'style=' not in bar.group(0), "no style attribute in the bar (CSP)")
+    ticker = re.search(r'<div class=zhash><b>([^<]*)</b> <span class="zdelta (\w+)">([^<]*)</span>', page)
+    check(ticker is not None and ticker.group(1).endswith("EH/s"),
+          "the current value is shown in EH/s", ticker.group(1) if ticker else "no ticker")
+    check(ticker is not None and ticker.group(2) == "gut" and ticker.group(3).startswith("+"),
+          "the mock's rising trend is marked as positive", ticker.group(3) if ticker else "")
+
+
+def check_own_node(nd):
+    """Pointing at the hub shows this node as its peers see it: a hoverable
+    group in the SVG and an 'eigen' record in status.json."""
+    print("\n  Own node")
+    page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+    status = json.loads((OUTPUT / "status.json").read_text(encoding="utf-8"))
+    check('<g class="nabe" tabindex="0">' in page, "the hub is a focusable group")
+    check("dieser Node" in page if nd.LANGUAGE == "de" else "this node" in page,
+          "the hub label is translated")
+    eigen = status.get("eigen") or {}
+    for key in ("version", "protokoll", "dienste", "dauer_s", "eingehend", "ausgehend", "adressen", "relay"):
+        check(key in eigen, f"status.json carries eigen.{key}")
+    check(eigen.get("adressen") == ["attrappeattrappeattrappeattrappeattrappeattrappeattrappe.onion:8333"],
+          "the announced onion address is passed on", str(eigen.get("adressen")))
+    check("<" not in json.dumps(eigen, ensure_ascii=False), "no markup in the record")
 
 
 def check_chain_check(nd, cfg):
@@ -1478,14 +1553,11 @@ def check_cache(nd, cfg):
     # The previous cycle has already filled the buffers — for the measurement
     # they must be empty, otherwise nothing is measured.
     nd.BLOCK_DATA.clear()
-    nd.DIFFICULTY.clear()
 
     nd.rpc = counting
-    nd.fetch_difficulty(cfg, 915312)
     nd.fetch_block_data(cfg, 915312)
     first = counter["n"]
     counter["n"] = 0
-    nd.fetch_difficulty(cfg, 915312)
     nd.fetch_block_data(cfg, 915312)
     nd.rpc = real_rpc
     check(first > 100, f"initial fill fetches {first} blocks")
@@ -1576,6 +1648,8 @@ def main():
             check_block_path(nd, cfg)
             check_chain_check(nd, cfg)
             check_fee_tile(nd)
+            check_hashrate(nd)
+            check_own_node(nd)
             check_cache(nd, cfg)
     finally:
         mock.terminate()

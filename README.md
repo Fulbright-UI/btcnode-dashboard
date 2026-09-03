@@ -37,13 +37,22 @@ it later in one line of the configuration file.
   height — its defence against being fed a false chain. The last hour of
   those probes is shown as a row of dots; a node that reports more blocks
   than you have raises a notice at the top of the page
-- **System state** of the machine: temperature with an hourly curve, load,
-  memory, disk space — on a Raspberry Pi also the power supply, because
-  undervoltage is the most common cause of corrupted blockchain data
-- **The fee to use**: the median fee of the last block, large at the top,
-  with Core's estimate for the next block underneath for comparison
-- **Mempool and fees**, block reward, next halving, difficulty
-- **Volume and fee history** of the last 24 hours
+- **A line from the early days** in the header, typed like someone
+  typing into a terminal — the cryptography mailing list, the P2P
+  Foundation thread, bitcointalk — one quote per data cycle, wording
+  checked against the Nakamoto Institute
+- **System state** of the machine: the day's temperature as one bar per
+  hour, CPU, memory, disk space — on a Raspberry Pi also the power supply,
+  because undervoltage is the most common cause of corrupted blockchain data
+- **The fee to use**: Core's economical estimate for the next block, large
+  at the top, the conservative one small underneath when it differs
+- **Days to the halving**, with the date and the blocks still to go
+- **Mempool** (memory, fees waiting, fill level) and **chain** (difficulty,
+  next adjustment), with an estimate of the electricity the difficulty
+  stands for — from the hashrate at an assumed fleet efficiency, next to
+  air conditioning, data centres, banking and gold mining as bars
+- **Volume and fee history** of the last 24 hours, one bar per block, fees
+  tinted by tier; every bar on the page tells its value when pointed at
 - **Electrum server**, if one runs, with the addresses for your wallet, a
   copy button next to them and a bar showing how far its index has got
 - **Log** of the node, live — accepted blocks in orange, their
@@ -127,7 +136,7 @@ additions:
 
 ```
 rpcauth=dashboard:<salt>$<digest>
-rpcwhitelist=dashboard:getblockchaininfo,getnetworkinfo,getmempoolinfo,getconnectioncount,uptime,estimatesmartfee,getblockstats,getblockhash,getblockheader,getpeerinfo
+rpcwhitelist=dashboard:getblockchaininfo,getnetworkinfo,getmempoolinfo,getconnectioncount,uptime,estimatesmartfee,getblockstats,getblockhash,getblockheader,getpeerinfo,getnetworkhashps
 rpcwhitelistdefault=0
 ```
 
@@ -156,7 +165,7 @@ page back to the node. The generator writes files, the web server reads them.
 Nothing else happens.
 
 **The RPC account may only read.** `bitcoin.conf` carries
-`rpcwhitelistdefault=0` and an explicit list of ten methods. Even if the
+`rpcwhitelistdefault=0` and an explicit list of eleven methods. Even if the
 password leaked, nothing could be done with it: no wallet, no sending, no
 configuration, no shutdown. Other RPC users are unaffected.
 
@@ -201,6 +210,7 @@ Generated files:
 | File | Interval | Content |
 |---|---|---|
 | `index.html` | 30 s | the complete page |
+| `chronik.json` | once | the quotes for the header line |
 | `status.json` | 30 s | the same building blocks plus peers as pure structure |
 | `log.txt` | 5 s | journal lines, plain text, without any markup |
 | `stil.css`, `dash.js` | once | change only when the program is replaced |
