@@ -56,6 +56,9 @@ def blockstats(height):
         "txs": int(2600 + 900 * math.sin(i / 7)),
         "feerate_percentiles": [1, 2,
                                 round(2.5 + 4 * abs(math.sin(i / 11)), 1), 9, 20],
+        # Core reports this as an integer in sat/vB; near the tip it is
+        # usually 1, sometimes 2 or 3.
+        "minfeerate": 1 + (i % 3 == 0),
     }
 
 

@@ -1232,6 +1232,25 @@ def check_electrum_index(page, case):
               "no bar while the node has no usable height")
 
 
+def check_fee_tile(nd):
+    """The fee tile shows the cheapest rate that got into the last block
+    large (2026-09-03), the median and Core's estimate small underneath."""
+    print("\n  Fee tile")
+    page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+    label = "niedrigste Gebühr im letzten Block" if nd.LANGUAGE == "de" else "lowest fee in the last block"
+    tile = re.search(r'<div class="kachel[^"]*"><div class=kwert>([\d,.]+)<span class=kvon>sat/vB</span></div>'
+                     r'<div class=klabel>([^<]*)</div><div class=kzusatz>([^<]*)</div>', page)
+    check(tile is not None and tile.group(2) == label, "the tile is labelled with the lowest fee",
+          tile.group(2) if tile else "no tile")
+    lowest = nd.BLOCK_DATA[-1][5]
+    median = nd.BLOCK_DATA[-1][3]
+    check(tile is not None and tile.group(1) == nd.decimal_sep(f"{lowest:.1f}"),
+          f"the large number is the block's minfeerate ({lowest})", tile.group(1) if tile else "")
+    check(tile is not None and nd.decimal_sep(f"{median:.1f}") in tile.group(3)
+          and ("Median" in tile.group(3) or "median" in tile.group(3)),
+          "the median stays in the small print", tile.group(3) if tile else "")
+
+
 def check_chain_check(nd, cfg):
     """The eclipse defence on the page: samples, dots, and the warning."""
     print("\n  Chain check")
@@ -1243,22 +1262,37 @@ def check_chain_check(nd, cfg):
     word = "bestätigen unsere Höhe, 1 hinterher" if nd.LANGUAGE == "de" else "matched our height, 1 behind"
     check(f"8 {'von' if nd.LANGUAGE == 'de' else 'of'} 9" in page and word in page,
           "the sentence counts agreement and laggards")
-    lead = "meldet" if nd.LANGUAGE == "de" else "probe reports"
+    lead = "melden" if nd.LANGUAGE == "de" else "probes report"
     check(lead not in page, "no chain warning while nobody is ahead")
 
-    # A stranger two blocks ahead of us: the map turns red, the state bar
-    # yellow, and the sentence names the lead.
-    nd.CHAIN_SAMPLES.append((time.time(), 999, 915314))
+    # One stranger claiming 1,436 blocks more (2026-09-03, a real case, the
+    # claim was a lie): a red dot, a calm sentence, no warning in the bar.
+    now = time.time()
+    nd.CHAIN_SAMPLES.append((now - 60, 998, 915312 + 1436))
     try:
         nd.one_pass(cfg)
         page = (OUTPUT / "index.html").read_text(encoding="utf-8")
-        check('class="stich voraus"' in page, "a stranger ahead shows as a red dot")
-        check('data-stufe="warn"' in page, "and raises the state bar to a notice")
+        # The mock's state bar is 'warn' anyway (update pending), so the
+        # test must look for the chain warning's own words, not the level.
+        bar = "die jüngsten Stichproben melden" if nd.LANGUAGE == "de" else "recent probes report"
+        check(page.count('class="stich voraus"') == 1, "a lone claim shows as one red dot")
+        check('class="abgleich warn"' not in page and bar not in page,
+              "but neither the map nor the state bar turn")
+        word = "ohne Header" if nd.LANGUAGE == "de" else "without delivering headers"
+        lead = "1.437" if nd.LANGUAGE == "de" else "1,437"
+        check(word in page and lead in page, "the sentence still names the claim")
+
+        # A second one, newest of all: now every fresh stranger is ahead —
+        # the map turns red, the state bar carries the warning, the sentence
+        # names the lead.
+        nd.CHAIN_SAMPLES.append((now, 999, 915314))
+        nd.one_pass(cfg)
+        page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+        check(bar in page, "two recent claims put the chain check into the state bar")
         found = re.search(r'class="abgleich warn".*?</span>(.*?)</span>', page, re.S)
-        check(found is not None and "2" in found.group(1),
-              "the sentence names the lead of two blocks")
+        check(found is not None and lead in found.group(1), "the sentence names the largest lead")
     finally:
-        nd.CHAIN_SAMPLES.pop()
+        del nd.CHAIN_SAMPLES[-2:]
         nd.one_pass(cfg)
 
 
@@ -1541,6 +1575,7 @@ def main():
         if args.case == "synchron":
             check_block_path(nd, cfg)
             check_chain_check(nd, cfg)
+            check_fee_tile(nd)
             check_cache(nd, cfg)
     finally:
         mock.terminate()

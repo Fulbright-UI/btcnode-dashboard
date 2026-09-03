@@ -266,12 +266,14 @@ DE = {
     "announced the last block first": "kündigte den letzten Block zuerst an",
     "{ok} of {n} probes matched our height, {behind} behind, none ahead · last {when}":
         "{ok} von {n} Stichproben bestätigen unsere Höhe, {behind} hinterher, keine voraus · zuletzt {when}",
-    "a probe reports {n} blocks more than we have":
-        "eine Stichprobe meldet {n} Blöcke mehr als wir",
+    "{k} probes report up to {n} blocks more than we have":
+        "{k} Stichproben melden bis zu {n} Blöcke mehr als wir",
+    "{ok} of {n} probes matched our height, {k} claimed up to {b} blocks more without delivering headers · last {when}":
+        "{ok} von {n} Stichproben bestätigen unsere Höhe, {k} behaupteten bis zu {b} Blöcke mehr, ohne Header zu liefern · zuletzt {when}",
     "Chain check: every few minutes Core asks a random node for its height. Last {when}":
         "Kettenabgleich: Core fragt alle paar Minuten einen zufälligen Knoten nach seiner Höhe. Zuletzt {when}",
-    "Chain check: a probe reports {n} blocks more":
-        "Kettenabgleich: eine Stichprobe meldet {n} Blöcke mehr",
+    "Chain check: recent probes report {n} blocks more":
+        "Kettenabgleich: die jüngsten Stichproben melden {n} Blöcke mehr",
     "Block {n} · announced {when} by {peer}": "Block {n} · angekündigt {when} von {peer}",
     "peer {n} (no longer connected)": "Peer {n} (nicht mehr verbunden)",
     "first to announce, {total} blocks in 24 h: {parts}":
@@ -286,6 +288,8 @@ DE = {
     "Blocks to here": "Blöcke dorthin",
     "last {when}": "zuletzt {when}",
     "median fee in the last block": "Median-Gebühr im letzten Block",
+    "lowest fee in the last block": "niedrigste Gebühr im letzten Block",
+    "median {fee}": "Median {fee}",
     "estimate for the next block: {fee}": "Schätzung nächster Block: {fee}",
     "Syncing the blockchain": "Synchronisiert die Blockchain",
     "of {n} bloecke": "von {n} Blöcken",
@@ -628,7 +632,7 @@ def fetch_block_data(cfg, tip):
         try:
             st = rpc(cfg, "getblockstats",
                      [height, ["height", "time", "total_out", "txs",
-                              "feerate_percentiles"]])
+                              "feerate_percentiles", "minfeerate"]])
         except RpcError:
             return          # not allowed or block missing — stop quietly
         percentiles = st.get("feerate_percentiles") or [0, 0, 0, 0, 0]
@@ -638,6 +642,7 @@ def fetch_block_data(cfg, tip):
             st.get("total_out", 0),
             percentiles[2],              # median fee in sat/vB
             st.get("txs", 0),
+            st.get("minfeerate", 0),     # cheapest fee that still got in
         ))
 
     BLOCK_DATA.sort(key=lambda e: e[0])
@@ -1349,10 +1354,13 @@ def collect_node(cfg):
         "verbindungen": int(verbindungen),
         "mempool": int(mempool.get("size", 0)),
         "gebuehren": fee_rates,
-        # The median fee of the most recent block, from getblockstats. This
-        # is what the tile shows large: what actually got in last time, not
-        # what Core guesses for next time (2026-09-01).
+        # Fees of the most recent block, from getblockstats: what actually
+        # got in last time, not what Core guesses for next time (2026-09-01).
+        # Since 2026-09-03 the tile shows the minimum large — the cheapest
+        # rate that still made it is the number you pay when you are not in
+        # a hurry; the median stays as small print.
         "median_gebuehr": (BLOCK_DATA[-1][3] if in_sync and BLOCK_DATA else None),
+        "min_gebuehr": (BLOCK_DATA[-1][5] if in_sync and BLOCK_DATA else None),
         "rueckstand": behind,
         "belegt": chain.get("size_on_disk", 0),
         "tempo": rate_text,
@@ -1621,13 +1629,23 @@ def chain_check(kz):
     up to date — during the initial sync every stranger is ahead, rightly,
     and the callers leave it out.
 
-    Returns (dots, ok, total, ahead) — dots as a list of 'gleich', 'hinten'
-    or 'voraus' in time order, ahead as the largest lead a stranger
-    reported, or 0.
+    Returns (dots, ok, total, ahead, alarm) — dots as a list of 'gleich',
+    'hinten' or 'voraus' in time order, ahead as the largest lead a stranger
+    reported (or 0), alarm whether that lead deserves the state bar.
+
+    The height in the version handshake is a bare claim, and strangers lie:
+    on 2026-09-03 several peers announced 1,340–1,440 blocks more than the
+    chain had, hours apart and consistently, while `headers == blocks` and
+    `getchaintips` showed nothing above our tip. Core itself never trusts
+    the claim — it only follows headers that actually arrive. So a single
+    red dot in a row of green ones stays a red dot, but the state bar turns
+    only when at least two samples of the hour are ahead AND the newest one
+    is among them. A real lag looks exactly like that: every fresh stranger
+    reports more than we have.
     """
     tip = (kz or {}).get("bloecke")
     if not tip or not CHAIN_SAMPLES:
-        return [], 0, 0, 0
+        return [], 0, 0, 0, False
     dots, ahead = [], 0
     for when, _, height in CHAIN_SAMPLES:
         ours = own_height_at(when, tip)
@@ -1639,12 +1657,13 @@ def chain_check(kz):
         else:
             dots.append("gleich")
     ok = sum(1 for d in dots if d == "gleich")
-    return dots, ok, len(dots), ahead
+    alarm = dots.count("voraus") >= 2 and dots[-1] == "voraus"
+    return dots, ok, len(dots), ahead, alarm
 
 
 def chain_check_markup(kz):
     """Dots and sentence for the head of the network card."""
-    dots, ok, total, ahead = chain_check(kz)
+    dots, ok, total, ahead, alarm = chain_check(kz)
     if not total:
         return ""
     last = format_age(time.time() - CHAIN_SAMPLES[-1][0])
@@ -1654,9 +1673,16 @@ def chain_check_markup(kz):
     # (2026-09-01). What the samples say is whether strangers saw the same
     # chain as we did — behind is harmless, ahead is the alarm.
     behind = total - ok - sum(1 for d in dots if d == "voraus")
-    if ahead:
-        sentence = t("a probe reports {n} blocks more than we have", n=ahead)
+    claimed = total - ok - behind
+    if alarm:
+        sentence = t("{k} probes report up to {n} blocks more than we have", k=claimed, n=format_number(ahead))
         cls = " warn"
+    elif ahead:
+        # Claims without headers: keep the number visible, keep the tone calm.
+        sentence = t("{ok} of {n} probes matched our height, {k} claimed up to {b} blocks more "
+                     "without delivering headers · last {when}",
+                     ok=ok, n=total, k=claimed, b=format_number(ahead), when=last)
+        cls = ""
     else:
         sentence = t("{ok} of {n} probes matched our height, {behind} behind, "
                      "none ahead · last {when}",
@@ -1669,9 +1695,9 @@ def chain_check_markup(kz):
 
 def chain_check_warning(kz):
     """The warning for the state bar, or None."""
-    _, _, _, ahead = chain_check(kz)
-    if ahead:
-        return t("Chain check: a probe reports {n} blocks more", n=ahead)
+    _, _, _, ahead, alarm = chain_check(kz)
+    if alarm:
+        return t("Chain check: recent probes report {n} blocks more", n=format_number(ahead))
     return None
 
 
@@ -3482,6 +3508,7 @@ def build_metrics_bar(kz, level):
 
     fees = kz.get("gebuehren") or {}
     median = kz.get("median_gebuehr")
+    lowest = kz.get("min_gebuehr")
     if level == "sync":
         tiles.append((format_number(kz.get("rueckstand", 0)),
                         t("bloecke rueckstand"), "", "", False))
@@ -3489,16 +3516,20 @@ def build_metrics_bar(kz, level):
         # The fee to enter with a transaction — the one number you want
         # without looking for it. It took the mempool tile's place on
         # 2026-09-01; the count is still in the 'Mempool & fees' card.
-        # Shown large is the median of the last block: half of what got in
-        # paid more, half paid less. Core's own estimate for the next block
-        # goes underneath in small print for comparison.
-        extra = ""
+        # Shown large is the lowest rate that still got into the last block
+        # (Jakob, 2026-09-03: "the fee I have to pay to get in", not the
+        # median). Median and Core's estimate for the next block go
+        # underneath in small print for comparison.
+        parts = [t("median {fee}", fee=decimal_sep(f"{median:.1f}"))]
         if fees.get(1):
-            extra = t("estimate for the next block: {fee}",
-                      fee=decimal_sep(f"{fees[1]:.1f}"))
+            parts.append(t("estimate for the next block: {fee}",
+                           fee=decimal_sep(f"{fees[1]:.1f}")))
+        big = lowest if lowest is not None else median
+        label = t("lowest fee in the last block") if lowest is not None \
+            else t("median fee in the last block")
         tiles.append((
-            decimal_sep(f"{median:.1f}") + "<span class=kvon>sat/vB</span>",
-            t("median fee in the last block"), "gut", extra, True))
+            decimal_sep(f"{big:.1f}") + "<span class=kvon>sat/vB</span>",
+            label, "gut", " · ".join(parts), True))
     elif kz.get("mempool") is not None:
         tiles.append((format_number(kz["mempool"]), t("in the mempool"),
                         "", "", False))
