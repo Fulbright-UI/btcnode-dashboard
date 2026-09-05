@@ -1357,7 +1357,7 @@ def check_fee_tile(nd):
           "the conservative estimate stays in the small print", tile.group(3) if tile else "")
 
 
-def check_hashrate(nd):
+def check_hashrate(nd, cfg):
     """The hashrate curve behind the state bar and its ticker line."""
     print("\n  Hashrate")
     page = (OUTPUT / "index.html").read_text(encoding="utf-8")
@@ -1376,6 +1376,25 @@ def check_hashrate(nd):
           "the current value is shown in EH/s", ticker.group(1) if ticker else "no ticker")
     check(ticker is not None and ticker.group(2) == "gut" and ticker.group(3).startswith("+"),
           "the mock's rising trend is marked as positive", ticker.group(3) if ticker else "")
+
+    # The tip must be measured like every other point — one difficulty
+    # period — or the headline is a short-window sample that jumps at each
+    # retarget (2026-09-06). The mock answers as a function of the height
+    # alone, so only the question itself can be checked.
+    asked = []
+    real_rpc = nd.rpc
+    nd.rpc = lambda c, m, p=None: (asked.append(p) or real_rpc(c, m, p))
+    saved = list(nd.HASHRATE)
+    try:
+        nd.HASHRATE.clear()
+        nd.fetch_hashrate(cfg, nd.HASHRATE_STEP * 454 + 1)   # one block past a retarget
+    finally:
+        nd.rpc = real_rpc
+        nd.HASHRATE[:] = saved
+    windows = [p for p in asked if p and len(p) == 2]
+    check(windows and all(p[0] == nd.HASHRATE_STEP for p in windows if p[1] >= nd.HASHRATE_STEP),
+          "every hashrate point, the tip included, is measured over one difficulty period",
+          " | ".join(str(p) for p in windows[:3]))
 
 
 def check_own_node(nd):
@@ -1731,7 +1750,7 @@ def main():
             check_block_path(nd, cfg)
             check_chain_check(nd, cfg)
             check_fee_tile(nd)
-            check_hashrate(nd)
+            check_hashrate(nd, cfg)
             check_own_node(nd)
             check_cache(nd, cfg)
     finally:

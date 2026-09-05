@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "3.5.3"
+VERSION = "3.5.4"
 
 # ================================================================= Language ==
 # English is the source language: the code carries the English text, the table
@@ -766,7 +766,14 @@ def fetch_hashrate(cfg, tip):
     present = {h for h, _ in HASHRATE}
     missing = [h for h in reversed(anchors) if h not in present][:HASHRATE_PER_PASS]
     for height in missing:
-        window = HASHRATE_STEP if height % HASHRATE_STEP == 0 else height % HASHRATE_STEP or 1
+        # The same window for every point, the tip included: a trailing
+        # difficulty period. Until 2026-09-06 the tip got `tip % 2016`, so
+        # right after a retarget the headline was Core's estimate over a
+        # single block interval — a draw from an exponential distribution,
+        # not a measurement (5th–95th percentile 0.35×…18.6× of the truth,
+        # and exactly 0 when two headers share a timestamp). Reported from
+        # outside with a simulation; the mock never read the window.
+        window = HASHRATE_STEP if height >= HASHRATE_STEP else height
         try:
             rate = rpc(cfg, "getnetworkhashps", [window, height])
         except RpcError:
