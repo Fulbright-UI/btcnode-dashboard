@@ -549,10 +549,10 @@ if [[ -n "$PROGRESS" ]]; then
     PERCENT="$(python3 -c "print(f'{float(\"$PROGRESS\") * 100:.1f}')" 2>/dev/null)"
 fi
 
+DO_RESTART=0
 if (( RESTART_NEEDED == 1 )); then
     yellow "bitcoind learns about the new account only after a restart."
     yellow "Until then the dashboard shows 'node not reachable'."
-    DO_RESTART=0
     if (( RESTART == 1 )); then
         DO_RESTART=1
     elif [[ "$SYNCED" == "yes" ]]; then
@@ -597,8 +597,13 @@ if [[ -n "$WEBSERVER" ]]; then
     done
     if (( PAGE_OK == 1 && NODE_OK == 1 )); then
         ok "page answers and the node is reachable"
+    elif (( PAGE_OK == 1 && RESTART_NEEDED == 1 && DO_RESTART == 1 )); then
+        ok "page answers; the node is still coming back after the restart"
+        info "Normal — it verifies its last blocks first, longer while syncing."
+        info "The page picks it up by itself, nothing to do."
     elif (( PAGE_OK == 1 )); then
-        warn "page answers, but the node does not yet — usually the restart is still due."
+        warn "page answers, but the node does not — the restart is still due:"
+        info "sudo systemctl restart bitcoind"
     else
         warn "page not reachable on 127.0.0.1:${PORT} — check: systemctl status nginx"
     fi
@@ -610,7 +615,7 @@ echo
 echo "  Commands:"
 echo "    systemctl status node-dashboard              the generator"
 echo "    journalctl -u node-dashboard -f              follow along"
-echo "    node-dashboard --config ${CONF} --once       rebuild the page by hand"
+echo "    node-dashboard --once                        rebuild the page by hand"
 echo "    sudo bash install.sh --uninstall             remove everything again"
 echo
 echo "  To change the language later, edit LANGUAGE in ${CONF}"
