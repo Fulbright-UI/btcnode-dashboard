@@ -199,6 +199,32 @@ buttons on the page copy an address to the browser clipboard — nothing more.
 **The firewall limits access to the local network**, if `ufw` is present. The
 page has no login — do not put it on the internet.
 
+### Why not Docker
+
+There is no container image, and none is planned. Not out of dislike —
+the isolation this project relies on comes from systemd, and a container
+would make it weaker, not stronger:
+
+- The unit confines the generator with `ProtectSystem=strict`, one
+  writable path, `IPAddressDeny=any` and a capability set of nothing. A
+  container gives a whole userland with a shell, a package manager and a
+  network namespace that has to be opened towards the node anyway.
+- The generator needs three things from the host: the RPC port on
+  `127.0.0.1`, the journal of `bitcoind` for the log, and `hwmon` for the
+  Pi's supply voltage. Each of those is a hole to punch into a container;
+  on the host they are membership of `systemd-journal` and one `ReadWritePaths`.
+- What Docker would add — reproducible installs on any distribution — the
+  project does not need: one Python file from the standard library and
+  one shell script, nothing to build.
+
+If you want a container anyway, build it yourself; it is not hard. The
+container needs Python 3.9, the one file, `--network host` (or the RPC
+port forwarded), the `bitcoind` journal mounted read-only, and the
+`OUT_DIR` shared with whatever web server serves it. Keep the RPC user
+read-only in `bitcoin.conf` exactly as `install.sh` sets it up — that
+part is the same in every deployment and is what actually protects the
+node.
+
 ---
 
 ## JavaScript

@@ -203,6 +203,33 @@ die Zwischenablage des Browsers — sonst nichts.
 **Die Firewall begrenzt den Zugriff auf das Heimnetz**, sofern `ufw` vorhanden
 ist. Die Seite hat keine Anmeldung — stell sie nicht ins Internet.
 
+### Warum kein Docker
+
+Es gibt kein Container-Image, und es ist keines geplant. Nicht aus
+Abneigung — die Abschottung, auf der dieses Projekt beruht, kommt von
+systemd, und ein Container würde sie schwächer machen, nicht stärker:
+
+- Die Unit sperrt den Generator mit `ProtectSystem=strict`, einem einzigen
+  beschreibbaren Pfad, `IPAddressDeny=any` und einem leeren Capability-Set
+  ein. Ein Container bringt ein ganzes Userland mit — Shell, Paketmanager
+  und einen Netz-Namensraum, der zum Node hin ohnehin geöffnet werden muss.
+- Der Generator braucht drei Dinge vom Host: den RPC-Port auf `127.0.0.1`,
+  das Journal von `bitcoind` für das Protokoll und `hwmon` für die
+  Versorgungsspannung des Pi. Jedes davon ist ein Loch, das man in einen
+  Container schlagen muss; auf dem Host sind es die Gruppe `systemd-journal`
+  und ein einziges `ReadWritePaths`.
+- Was Docker brächte — reproduzierbare Installation auf jeder Distribution —
+  braucht das Projekt nicht: eine Python-Datei aus der Standardbibliothek
+  und ein Shell-Skript, nichts zu bauen.
+
+Wer trotzdem einen Container will, baut ihn selbst; schwer ist es nicht.
+Er braucht Python 3.9, die eine Datei, `--network host` (oder den
+weitergereichten RPC-Port), das Journal von `bitcoind` nur lesend
+eingehängt und das `OUT_DIR` geteilt mit dem Webserver, der es ausliefert.
+Der RPC-Nutzer bleibt in der `bitcoin.conf` nur lesend, genau wie
+`install.sh` ihn anlegt — das ist in jeder Betriebsart gleich und ist das,
+was den Node wirklich schützt.
+
 ---
 
 ## JavaScript
