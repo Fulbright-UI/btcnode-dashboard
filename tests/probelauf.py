@@ -342,6 +342,19 @@ def check_translation(nd):
           f"all {len(calls)} t() source strings are in DE",
           " | ".join(f"line {ln}: {s[:34]}" for ln, s in missing[:3]))
 
+    # The opposite direction. A source string is English by definition; the
+    # check above only proves that DE knows it. Twelve source strings were
+    # transliterated German ("bloecke", "eingehend", "no eintraege") left
+    # over from the 2026-08-23 rename — DE had a matching key, so the German
+    # page was right and the English page showed them verbatim. Reported
+    # from outside on 2026-09-06; nothing here had looked this way.
+    german = re.compile(
+        r"\b(bloecke|eintraege|dienste|eingehend|ausgehend|rueckstand|"
+        r"Bl[oö]cke|Punkte|Std)\b")
+    leftovers = sorted(s for s in calls if german.search(s))
+    check(not leftovers, "no t() source string is German",
+          " | ".join(s[:34] for s in leftovers[:3]))
+
     # And the placeholders of every call must exist in the German text, or
     # str.format raises a KeyError in the middle of building the page.
     broken = []

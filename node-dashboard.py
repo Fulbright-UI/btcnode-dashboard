@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "3.5.1"
+VERSION = "3.5.2"
 
 # ================================================================= Language ==
 # English is the source language: the code carries the English text, the table
@@ -113,9 +113,10 @@ DE = {
     # -- Chain, network facts, mempool ---------------------------------------
     "verified through {date}": "geprüft bis {date}",
     "{n} pp/h": "{n} %-Punkte/Std",
+    "{span} · +{n} pp": "{span} · +{n} %-Punkte",
     "Block reward": "Blockbelohnung",
     "remaining": "noch",
-    "{n} bloecke": "{n} Blöcke",
+    "{n} blocks": "{n} Blöcke",
     "Difficulty": "Schwierigkeit",
     "last adjustment": "letzte Anpassung",
     "last adjustments": "letzte Anpassungen",
@@ -123,7 +124,7 @@ DE = {
     "Difficulty of the last {n} adjustments": "Schwierigkeit der letzten {n} Anpassungen",
     "last {n} adjustments": "letzte {n} Anpassungen",
     "Connections": "Verbindungen",
-    "eingehend": "davon eingehend",
+    "inbound": "davon eingehend",
     "outbound": "davon ausgehend",
     "Version": "Version",
     "Node up for": "Node läuft seit",
@@ -159,7 +160,7 @@ DE = {
 
     # -- 24 hour cards -------------------------------------------------------
     "Appears once the chain is up to date. Until then the "
-    "most recent bloecke are years old and would say nothing.":
+    "most recent blocks are years old and would say nothing.":
         "Erscheint, sobald die Kette steht. Bis dahin liegen die "
         "letzten Blöcke Jahre zurück und wären ohne Aussage.",
     "Total": "Summe",
@@ -195,7 +196,7 @@ DE = {
         "Wallet fremde Server, und die erfahren, welche Adressen dir gehören. "
         "electrs ist der übliche Weg; das README sagt wie.",
     "complete": "vollständig",
-    "{n} of {tip} bloecke": "{n} von {tip} Blöcken",
+    "{n} of {tip} blocks": "{n} von {tip} Blöcken",
     "On the local network": "Im Heimnetz",
     "Over Tor": "Über Tor",
     "Enter this in your wallet as a custom server.":
@@ -246,10 +247,10 @@ DE = {
         "Der Node hat die Liste der Gegenstellen noch nicht "
         "geliefert. Während der Synchronisation dauert das "
         "gelegentlich länger als das Zeitlimit.",
-    "Point at a line for identifier, dienste and connection time.":
+    "Point at a line for identifier, services and connection time.":
         "Auf eine Zeile zeigen für Kennung, Dienste und Verbindungsdauer.",
     "No log source configured.": "Keine Protokollquelle eingerichtet.",
-    "no eintraege": "keine Einträge",
+    "no entries": "keine Einträge",
     "log not readable: {e}": "Protokoll nicht lesbar: {e}",
     "no access to the journal": "kein Zugriff auf das Journal",
 
@@ -268,8 +269,8 @@ DE = {
     "{n} on disk": "{n} auf der SSD",
     " · pruning active": " · Pruning aktiv",
     "of": "von",
-    "bloecke verified · known to the network": "Blöcke geprüft · im Netz",
-    "bloecke rueckstand": "Blöcke Rückstand",
+    "blocks verified · known to the network": "Blöcke geprüft · im Netz",
+    "blocks behind": "Blöcke Rückstand",
     "in the mempool": "im Mempool",
     "The node that delivered the last block is no longer connected.":
         "Der Knoten, der den letzten Block lieferte, ist nicht mehr verbunden.",
@@ -301,7 +302,6 @@ DE = {
     "first to announce, {total} blocks in 24 h: {parts}":
         "zuerst angekündigt, {total} Blöcke in 24 h: {parts}",
     "Electrum · local": "Electrum · lokal",
-    "{n} bloecke to go": "noch {n} Blöcke",
     "progress not readable": "Fortschritt nicht lesbar",
     "Index": "Index",
     "Blocks from here": "Blöcke von hier",
@@ -312,7 +312,7 @@ DE = {
     "vs. a year ago · hashrate, curve since 2009": "zum Vorjahr · Hashrate, Kurve seit 2009",
     "safe: {fee}": "sicher: {fee}",
     "Syncing the blockchain": "Synchronisiert die Blockchain",
-    "of {n} bloecke": "von {n} Blöcken",
+    "of {n} blocks": "von {n} Blöcken",
     "Node in sync, nothing unusual": "Node synchron, keine Auffälligkeiten",
     "days": "Tage",
     "Block {n} · {v} · {k} transactions": "Block {n} · {v} · {k} Transaktionen",
@@ -385,7 +385,7 @@ DE = {
     # 'inbound' appears twice: as a summary figure ("davon eingehend") and as
     # the direction of one connection ("eingehend"). The hint after the bar
     # keeps the two apart.
-    "eingehend|richtung": "eingehend",
+    "inbound|richtung": "eingehend",
     "outbound|richtung": "ausgehend",
     "Identifier": "Kennung",
     "Services": "Dienste",
@@ -1381,7 +1381,7 @@ def build_progress_curve(width=300, height=54):
         f'<polyline points="{line}" fill="none" stroke="var(--balken)" '
         f'stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>'
         f"</svg>",
-        decimal_sep(f"{span} · +{zuwachs:.2f} %-Punkte"),
+        t("{span} · +{n} pp", span=span, n=decimal_sep(f"{zuwachs:.2f}")),
     )
 
 
@@ -1694,7 +1694,7 @@ def collect_node(cfg):
     net_fields = [
         (t("Connections"), str(verbindungen),
          "warn" if int(verbindungen) < 8 else ""),
-        (t("eingehend"), str(net.get("connections_in", "?")), ""),
+        (t("inbound"), str(net.get("connections_in", "?")), ""),
         (t("outbound"), str(net.get("connections_out", "?")), ""),
         (t("Version"), net.get("subversion", "?").strip("/"), ""),
         (t("Node up for"), format_duration(laufzeit), ""),
@@ -1791,7 +1791,7 @@ def collect_node(cfg):
     # the chain is not up to date they carry a skeleton and dashes instead of
     # numbers — nothing that could be mistaken for a measurement.
     waiting_note = t("Appears once the chain is up to date. Until then the "
-                     "most recent bloecke are years old and would say nothing.")
+                     "most recent blocks are years old and would say nothing.")
     volume_fields, volume_note = placeholder_card(
         [t("Total"), t("Transactions"), t("Blocks")],
         t("Volume per block"), waiting_note, columns=True)
@@ -2582,7 +2582,7 @@ def peer_summary(peers):
     inbound = sum(1 for p in peers if p["eingehend"])
 
     fields = [(t("Connected"), f"{len(peers)}", ""),
-              (t("eingehend"), f"{inbound}", "")]
+              (t("inbound"), f"{inbound}", "")]
     for net, n in sorted(by_network.items(), key=lambda e: -e[1]):
         fields.append((network_name(net), str(n), ""))
     if pings:
@@ -2769,7 +2769,7 @@ def collect_log(cfg):
         rows = [shorten_log_line(z)
                   for z in r.stdout.splitlines() if z.strip()]
         if not rows:
-            sections.append((service, t("no eintraege")))
+            sections.append((service, t("no entries")))
         else:
             # Newest first: a static page cannot scroll to the bottom
             sections.append((service, "\n".join(reversed(rows))))
@@ -2908,7 +2908,7 @@ def collect_electrum(cfg, tip=None):
         # The value is short since 2026-09-05 — in the half card the old
         # "complete · block 965.530" broke in two (Jakob). The heights
         # moved into the bar's tooltip.
-        heights = t("{n} of {tip} bloecke", n=format_number(indexed),
+        heights = t("{n} of {tip} blocks", n=format_number(indexed),
                     tip=format_number(tip))
         if behind <= 1:
             fields.append((t("Index"), t("complete"), "gut"))
@@ -2916,7 +2916,7 @@ def collect_electrum(cfg, tip=None):
         else:
             # Close to the tip a percentage says "100,0 %" while blocks are
             # still missing — there the count is the honest figure.
-            rest = (t("{n} bloecke to go", n=format_number(behind))
+            rest = (t("{n} blocks to go", n=format_number(behind))
                     if fraction >= 0.999
                     else decimal_sep(f"{fraction * 100:.1f} %"))
             fields.append((t("Index"), rest, "warn"))
@@ -4051,8 +4051,8 @@ def script_text():
         # 'hinweis', not 'note': dash.js reads T.hinweis. Same rename damage
         # as 'antwort' below — the detail box showed nothing at all while
         # not pointing, and that looked like an empty box by design.
-        "hinweis": t("Point at a line for identifier, dienste and connection time."),
-        "eingehend": t("eingehend|richtung"),
+        "hinweis": t("Point at a line for identifier, services and connection time."),
+        "eingehend": t("inbound|richtung"),
         "ausgehend": t("outbound|richtung"),
         "kennung": t("Identifier"),
         "dienste": t("Services"),
@@ -4303,14 +4303,14 @@ def build_metrics_bar(kz, level):
             f'{format_number(kz.get("bloecke", 0))}'
             f'<span class=kvon>{html_escape(t("of"))}</span>'
             f'{format_number(kz["kopfzeilen"])}',
-            t("bloecke verified · known to the network"), "", extra, True,
+            t("blocks verified · known to the network"), "", extra, True,
         ))
 
     fees = kz.get("gebuehren") or {}
     median = kz.get("median_gebuehr")
     if level == "sync":
         tiles.append((format_number(kz.get("rueckstand", 0)),
-                        t("bloecke rueckstand"), "", "", False))
+                        t("blocks behind"), "", "", False))
     elif fees.get(1):
         # The fee to enter with a transaction — the one number you want
         # without looking for it. It took the mempool tile's place on
@@ -4397,7 +4397,7 @@ def build_state_bar(level, word, extra, progress, kz):
         )
         right_number = format_number(kz.get("bloecke", 0))
         right_label = html_escape(
-            t("of {n} bloecke", n=format_number(kz.get("kopfzeilen", 0))))
+            t("of {n} blocks", n=format_number(kz.get("kopfzeilen", 0))))
     else:
         parts.append(
             '<div class=zlinks><span class=punkt></span><div>'
@@ -4609,7 +4609,7 @@ def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None,
         '<span><i class="netzfarbe ansager"></i>'
         f"{html_escape(t('announced the last block first'))}</span>"
         f'<span><i class="netzfarbe richtung voll"></i>{html_escape(t("outbound|richtung"))}</span>'
-        f'<span><i class="netzfarbe richtung"></i>{html_escape(t("eingehend|richtung"))}</span>'
+        f'<span><i class="netzfarbe richtung"></i>{html_escape(t("inbound|richtung"))}</span>'
     )
 
     return (
@@ -4622,7 +4622,7 @@ def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None,
         '<div class=peerdetail id=peerdetail>'
         f"<p class=blockweg>{html_escape(sentences[0])}</p>"
         f"<p class=blockweg>{html_escape(sentences[1])}</p>"
-        f"<p class=leer>{html_escape(t('Point at a line for identifier, dienste and connection time.'))}</p>"
+        f"<p class=leer>{html_escape(t('Point at a line for identifier, services and connection time.'))}</p>"
         "</div></section>"
     )
 
