@@ -198,13 +198,8 @@ DE = {
     "{n} of {tip} bloecke": "{n} von {tip} Blöcken",
     "On the local network": "Im Heimnetz",
     "Over Tor": "Über Tor",
-    "Enter this in your wallet as a custom server — in the "
-    "BitBoxApp under Settings → Advanced settings → Connect your "
-    "own voll node. Clicking an address selects it, Ctrl+C copies.":
-        "In der Wallet als eigenen Server eintragen — in der BitBoxApp "
-        "unter Einstellungen → Erweiterte Einstellungen → Eigene Full "
-        "Node verbinden. Ein Klick auf eine Adresse markiert sie, "
-        "Strg+C kopiert.",
+    "Enter this in your wallet as a custom server.":
+        "In der Wallet als eigenen Server eintragen.",
 
     # -- Network map ---------------------------------------------------------
     "unknown": "unbekannt",
@@ -2945,9 +2940,9 @@ def collect_electrum(cfg, tip=None):
     if onion:
         fields.append((t("Over Tor"), f"{onion}:{port}", "kopier"))
 
-    note = t("Enter this in your wallet as a custom server — in the "
-                "BitBoxApp under Settings → Advanced settings → Connect your "
-                "own voll node. Clicking an address selects it, Ctrl+C copies.")
+    # Just the one sentence since 2026-09-06 (Jakob): the app-specific
+    # path and the copy hint went.
+    note = t("Enter this in your wallet as a custom server.")
 
     return ("Electrum server", fields, note)
 
