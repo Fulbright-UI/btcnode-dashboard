@@ -27,6 +27,7 @@ Usage:
 import argparse
 import ast
 import importlib.util
+import html
 import json
 import math
 import os
@@ -239,9 +240,8 @@ def write_config(language="de"):
 # entry would never show up.
 EXPECTED = {
     "de": {
-        "raster": ["System", "Netzwerk"],
+        "raster": ["System", "Netzwerk & Electrum"],
         "netz": "Verbundene Knoten",
-        "voll": "Electrum-Server",
         "protokoll": "Protokoll",
         "laufzeit": "läuft seit",
         "weit": ("Volumen · 24 Stunden", "Gebührenverlauf · 24 Stunden"),
@@ -252,9 +252,8 @@ EXPECTED = {
         "decimal_sep": ",",
     },
     "en": {
-        "raster": ["System", "Network"],
+        "raster": ["System", "Network & Electrum"],
         "netz": "Connected nodes",
-        "voll": "Electrum server",
         "protokoll": "Log",
         "laufzeit": "up for",
         "weit": ("Volume · 24 hours", "Fee history · 24 hours"),
@@ -303,7 +302,7 @@ def zones_of(page):
     for i in range(len(spots) - 1):
         start, name = spots[i]
         chunk = page[start:spots[i + 1][0]]
-        zones[name] = re.findall(r"<h2>(.*?)</h2>", chunk)
+        zones[name] = [html.unescape(x) for x in re.findall(r"<h2>(.*?)</h2>", chunk)]
     zones["protokoll"] = re.findall(
         r'class="karte protokoll">.*?<h2>(.*?)</h2>', page, re.S)
     return zones
@@ -727,8 +726,10 @@ def check_page(page, case, nd=None, language="de"):
     # this rule it pushes the column out of view.
     check(".links>*,.rechts>*{min-width:0}" in terse,
           "the columns cannot grow wider than their share")
-    check(E["voll"] in zones.get("voll", []),
-          "Electrum card at full width")
+    # Since 2026-09-05 the Electrum server is a column of the network card;
+    # the full-width zone stays and must be empty.
+    check(zones.get("voll") == [E["protokoll"]], "no card at full width any more",
+          " | ".join(zones.get("voll", [])))
 
     # The 24 hour cards are always present so the layout is complete.
     # Without data they carry a skeleton.
@@ -878,15 +879,37 @@ def check_page(page, case, nd=None, language="de"):
     flat = json.dumps(chron, ensure_ascii=False)
     # The prompt is written <date who · where> like a terminal — angle
     # brackets as text, never a tag (set via textContent, escaped server-side).
-    check(re.search(r"<[a-zA-Z/!]", flat) is None, "no markup in the chronicle")
-    check("&lt;" in page.split("</header>")[0], "the prompt's brackets reach the page escaped")
-    check(all(len(e["zeile2"]) <= 200 for e in chron["zitate"]), "quotes stay short")
-    check(re.search(r'<header><h1>.*?</h1><div class=chronik id=chronik><div class="term zitat">.*?<div id=z-kopf>', page, re.S) is not None,
-          "the terminal sits in the header row, between brand and versions")
+    # Names stand in angle brackets ("<Satoshi Nakamoto>") and start with a
+    # capital; a tag would start with a lowercase letter, a slash or '!'.
+    check(re.search(r"<(/|!|[a-z])", flat) is None, "no markup in the chronicle")
+    check(all(len(e["teile"][2]) <= 200 for e in chron["zitate"]), "quotes stay short")
+    check(all(len(e["teile"]) == 3 and e["teile"][1] and e["teile"][0].startswith("[")
+              for e in chron["zitate"]),
+          "each entry is [date], name, text")
+    # History runs forward: the dates must never step back (2026-09-05).
+    dates = [e["teile"][0].strip("[] ") for e in chron["zitate"]]
+    if nd.LANGUAGE == "de":
+        dates = [".".join(reversed(d.split("."))) for d in dates]
+    check(dates == sorted(dates), "the chronicle runs in date order")
+    # Header in two halves since 2026-09-05: the chronicle on the left,
+    # flush with the page's left column; brand, versions and clock right.
+    check(re.search(r'<header><div class=kopfgruppe><h1>.*?</h1><div id=z-kopf>.*?<div class=kopfrechts>.*?</div></div>'
+                    r'<div class=chronik id=chronik><div class="term zitat">', page, re.S) is not None,
+          "the terminal is the header's right half, after brand, versions and clock")
     check('"chronik.json"' in script_raw and "chronikSchritt();" in script_raw.split("function holeStatus")[1].split("function holeProtokoll")[0],
           "dash.js fetches the chronicle and advances it with the data cycle")
-    check(".after(cursor)" in script_raw and "NACHBARN" in script_raw,
-          "the cursor follows the writing, slips get corrected")
+    # The meta refresh must sit inside <noscript>: outside it, Chrome
+    # reloads the page every cycle even after the script removes the
+    # element — the reload is scheduled at parse time (found 2026-09-05
+    # by driving the live page; every chronicle complaint of that evening
+    # was this).
+    check(re.search(r"<noscript><meta http-equiv=refresh[^>]*></noscript>", page) is not None
+          and page.count("http-equiv=refresh") == 1,
+          "the meta refresh lives inside <noscript> only")
+    check("refresh.remove()" not in script_raw, "dash.js no longer tries to remove the refresh")
+    # The slips-and-backspace act left on 2026-09-05 (Jakob): just write.
+    check(".after(e.cursor)" in script_raw and "NACHBARN" not in script_raw,
+          "the cursor follows the writing, no staged slips")
 
     # The buttons are wired once at load AND after every update: the first
     # fetch replaces the card's markup, and unwired buttons stay hidden —
@@ -1256,8 +1279,10 @@ def check_power_supply(page):
 def check_electrum_index(page, case):
     """The index bar of the Electrum card, against the mocked height."""
     print("\n  Electrum index")
-    card = re.search(r'<section class="karte voll">.*?</section>', page, re.S)
-    check(card is not None, "the Electrum card is on the page")
+    # The Electrum column of the network card (since 2026-09-05) — the
+    # mempool bar in the column beside it must not count.
+    card = re.search(r'<div class=spalte><h3>Electrum</h3>.*?</div>', page, re.S)
+    check(card is not None, "the Electrum column is on the page")
     if not card:
         return
     text = re.sub(r"<[^>]+>", " ", card.group(0))
@@ -1393,6 +1418,19 @@ def check_script_strings(nd):
     unused = sorted(set(table) - used)
     check(not unused, "every string in the table is read",
           " | ".join(unused))
+    # Same trap, third form (found 2026-09-05): the page wrote
+    # data-interval, dash.js read dataset.intervall — undefined, so the
+    # script fell back to 30 s while the generator ran at 21, and the
+    # chronicle's arithmetic disagreed between page and script. Every
+    # dataset.x the script reads must be written as data-x somewhere.
+    page = (OUTPUT / "index.html").read_text(encoding="utf-8")
+    written = set(re.findall(r"\bdata-([a-z]+)=", page))
+    read = set(re.findall(r"\bdataset\.([a-zA-Z]+)", script))
+    # 'nr' and 'wert' hang on peers and copy buttons — absent by design
+    # when the page has none (case 'leer').
+    missing = sorted(a for a in read - {"nr", "wert"} if a.lower() not in written)
+    check(not missing, f"every data attribute dash.js reads is on the page ({len(read)})",
+          " | ".join(missing))
 
 
 def check_inbound_onion(nd, cfg):

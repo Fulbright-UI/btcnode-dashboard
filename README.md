@@ -37,24 +37,30 @@ it later in one line of the configuration file.
   height — its defence against being fed a false chain. The last hour of
   those probes is shown as a row of dots; a node that reports more blocks
   than you have raises a notice at the top of the page
-- **A line from the early days** in the header, typed like someone
-  typing into a terminal — the cryptography mailing list, the P2P
-  Foundation thread, bitcointalk — one quote per data cycle, wording
-  checked against the Nakamoto Institute
+- **A timeline in the header**, typed like someone typing into a
+  terminal, one entry per data cycle and in date order: from the Bank of
+  England, Jekyll Island and the Federal Reserve Act through Bretton
+  Woods, 1971 and the cypherpunks to Satoshi's own words (checked against
+  the Nakamoto Institute), the genesis block, Mt. Gox, Silk Road, the
+  halvings and the ETF. Each restart of the service begins at the top;
+  before a new entry the old one is deleted backwards
 - **System state** of the machine: the day's temperature as one bar per
   hour, CPU, memory, disk space — on a Raspberry Pi also the power supply,
   because undervoltage is the most common cause of corrupted blockchain data
 - **The fee to use**: Core's economical estimate for the next block, large
   at the top, the conservative one small underneath when it differs
 - **Days to the halving**, with the date and the blocks still to go
-- **Mempool** (memory, fees waiting, fill level) and **chain** (difficulty,
-  next adjustment), with an estimate of the electricity the difficulty
-  stands for — from the hashrate at an assumed fleet efficiency, next to
-  air conditioning, data centres, banking and gold mining as bars
-- **Volume and fee history** of the last 24 hours, one bar per block, fees
-  tinted by tier; every bar on the page tells its value when pointed at
-- **Electrum server**, if one runs, with the addresses for your wallet, a
-  copy button next to them and a bar showing how far its index has got
+- **Chain, mempool and Electrum** in one card: difficulty, next
+  adjustment, mempool memory, fees waiting and fill level in the left
+  column; in the right one your Electrum server, if one runs, with a bar
+  showing how far its index has got; underneath the addresses for your
+  wallet with a copy button
+- **Volume and fee history** of the last 24 hours, one bar per block, in
+  three steps — grey, green, block orange — fees by sat/vB, volume
+  against the day's mean; the label names the peak, every bar on the
+  page tells its value when pointed at
+- **Hashrate since 2009** as a curve behind the state bar, linear, with
+  the change against a year ago
 - **Log** of the node, live — accepted blocks in orange, their
   announcements muted, chain-check probes green, errors and warnings red
   and yellow. The lines stay plain text; only the colour comes from a
@@ -203,7 +209,10 @@ principle: **the interface is a static file.** The generator writes
 and fills the values in. There is no endpoint that accepts anything.
 
 Everything keeps working without JavaScript — the page then reloads itself via
-a `<meta http-equiv=refresh>`.
+a `<meta http-equiv=refresh>` inside `<noscript>`. Inside `<noscript>` on
+purpose: a refresh outside it is scheduled by the browser at parse time, and
+a script removing the element afterwards cancels nothing — the page kept
+reloading under the script every cycle (3.4).
 
 Generated files:
 

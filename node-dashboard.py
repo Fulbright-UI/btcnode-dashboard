@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "3.4"
+VERSION = "3.5"
 
 # ================================================================= Language ==
 # English is the source language: the code carries the English text, the table
@@ -146,7 +146,7 @@ DE = {
     # too — otherwise the card silently slides into the wrong grid.
     "Volume · 24 hours": "Volumen · 24 Stunden",
     "Fee history · 24 hours": "Gebührenverlauf · 24 Stunden",
-    "Network": "Netzwerk",
+    "Network & Electrum": "Netzwerk & Electrum",
     "Chain": "Kette",
     "Mempool": "Mempool",
     "Halving": "Halbierung",
@@ -173,6 +173,7 @@ DE = {
     "Range": "Spanne",
     "{von} to {bis} sat/vB": "{von} bis {bis} sat/vB",
     "average fee per block": "mittlere Gebühr je Block",
+    "{label} · peak {v}": "{label} · Spitze {v}",
     "Average fee per block over the last 24 hours":
         "Mittlere Gebühr je Block der letzten 24 Stunden",
 
@@ -183,6 +184,8 @@ DE = {
     "Responding": "Antwortet",
     "yes": "ja",
     "no, still indexing": "nein, indiziert noch",
+    "complete": "vollständig",
+    "{n} of {tip} bloecke": "{n} von {tip} Blöcken",
     "On the local network": "Im Heimnetz",
     "Over Tor": "Über Tor",
     "Enter this in your wallet as a custom server — in the "
@@ -293,8 +296,6 @@ DE = {
     "first to announce, {total} blocks in 24 h: {parts}":
         "zuerst angekündigt, {total} Blöcke in 24 h: {parts}",
     "Electrum · local": "Electrum · lokal",
-    "complete · block {n}": "vollständig · Block {n}",
-    "{n} of {tip} bloecke · {rest}": "{n} von {tip} Blöcken · {rest}",
     "{n} bloecke to go": "noch {n} Blöcke",
     "progress not readable": "Fortschritt nicht lesbar",
     "Index": "Index",
@@ -316,22 +317,13 @@ DE = {
     "halving · about {date}": "Halbierung · ca. {date}",
     "{n} blocks to go": "noch {n} Blöcke",
     "fees waiting": "wartende Gebühren",
-    "energy · estimate at {j} J/TH": "Energie · Schätzung bei {j} J/TH",
-    "≈ {gw} GW · ≈ {twh} TWh a year · {share} % of the world's electricity":
-        "≈ {gw} GW · ≈ {twh} TWh im Jahr · {share} % des Weltstroms",
-    "electricity in comparison": "Strom im Vergleich",
-    "≈ {twh} TWh · {share} %": "≈ {twh} TWh · {share} %",
-    "air conditioning": "Klimaanlagen",
-    "data centres": "Rechenzentren",
-    "banking system": "Bankwesen",
-    "gold mining": "Goldförderung",
-    "{name}: ≈ {twh} TWh a year · {share} % of the world's electricity":
-        "{name}: ≈ {twh} TWh im Jahr · {share} % des Weltstroms",
-    "electricity a year, estimates · share of the world's ≈ {n} TWh (IEA 2024) · Bitcoin from difficulty at {j} J/TH · cooling IEA, data centres IEA 2024, banking and gold Galaxy Digital 2021":
-        "Strom im Jahr, Schätzungen · Anteil am Weltstrom von ≈ {n} TWh (IEA 2024) · Bitcoin aus der Schwierigkeit bei {j} J/TH · Klimaanlagen IEA, Rechenzentren IEA 2024, Bankwesen und Gold Galaxy Digital 2021",
+    "Chain & Mempool": "Kette & Mempool",
     "peak per hour · 24 h": "Spitze je Stunde · 24 h",
     "Peak temperature per hour over the last 24 hours":
         "Höchsttemperatur je Stunde der letzten 24 Stunden",
+    "below the 24 h mean": "unter dem 24-h-Mittel",
+    "up to twice the mean": "bis zum Doppelten",
+    "above that": "darüber",
     "up to 2 sat/vB": "bis 2 sat/vB",
     "up to 5 sat/vB": "bis 5 sat/vB",
     "above 5 sat/vB": "über 5 sat/vB",
@@ -520,8 +512,9 @@ def temperature_colour(celsius):
     return "var(--akzent)"
 
 
-def build_bar(fraction, level="", height=6):
-    """Horizontal fill bar, fraction between 0 and 1.
+def build_bar(fraction, level="", height=6, title=None):
+    """Horizontal fill bar, fraction between 0 and 1. 'title' replaces the
+    percentage in the tooltip (escaped here).
 
     SVG on purpose instead of a <div style="width:…">: the Content Security
     Policy reads 'style-src self' without 'unsafe-inline', and that applies to
@@ -532,6 +525,7 @@ def build_bar(fraction, level="", height=6):
     """
     width = min(100.0, max(0.0, fraction * 100))
     cls = f"balkenfuellung {level}".strip()
+    tip = html_escape(title) if title else f"{width:.0f} %"
 
     # The rounded corners come from CSS on the wrapping element, not from
     # 'rx' on the rectangle: the SVG is stretched many times over by
@@ -540,9 +534,9 @@ def build_bar(fraction, level="", height=6):
     # turns into a blob. That was on screen on 2026-08-23.
     return (f'<span class="balken hoch{height}">'
             f'<svg viewBox="0 0 100 {height}" preserveAspectRatio="none" '
-            f'role="img" aria-label="{width:.0f} %">'
+            f'role="img" aria-label="{tip}">'
             f'<rect width="{width:.2f}" height="{height}" class="{cls}">'
-            f"<title>{width:.0f} %</title></rect>"
+            f"<title>{tip}</title></rect>"
             f"</svg></span>")
 
 
@@ -579,17 +573,50 @@ def build_columns(values, colour="var(--akzent)", label="", width=260, height=38
             f'aria-label="{html_escape(label)}">{"".join(parts)}</svg>')
 
 
-# Fee tiers for the 24-hour bars (Jakob, 2026-09-03): up to 2 sat/vB green,
-# up to 5 yellow, above that block orange — red stays reserved for faults.
-FEE_TIERS = ((2, "gut", "var(--akzent)"), (5, "warn", "var(--warn)"),
-             (None, "teuer", "var(--block)"))
+# Fee tiers for the 24-hour bars (Jakob, 2026-09-03): up to 2 sat/vB, up
+# to 5, above that. One hue in three steps since 2026-09-05 (Jakob): muted
+# green-grey, the accent, a bright mint — it reads as intensity and
+# collides with nothing (yellow stays warning, orange the block, red
+# faults). The volume bars use the same three steps (VOLUME_TIERS).
+FEE_TIERS = ((2, "s1", "var(--stufe1)"), (5, "s2", "var(--stufe2)"),
+             (None, "s3", "var(--stufe3)"))
+# Volume per block, relative to the 24-hour mean: below it, up to twice
+# it, above that. Fixed BTC limits would make a whole day one colour.
+VOLUME_TIERS = ((1.0, "s1", "var(--stufe1)"), (2.0, "s2", "var(--stufe2)"),
+                (None, "s3", "var(--stufe3)"))
 
 
-def fee_tier(fee):
-    for limit, cls, colour in FEE_TIERS:
+def fee_tier(fee, tiers=FEE_TIERS):
+    for limit, cls, colour in tiers:
         if limit is None or fee <= limit:
             return cls, colour
-    return FEE_TIERS[-1][1:]
+    return tiers[-1][1:]
+
+
+def build_legend(entries):
+    """The colour dots under a chart, same markup as the network legend."""
+    legend = "".join(
+        f'<span><i class="netzfarbe {cls}"></i>{html_escape(text)}</span>'
+        for cls, text in entries)
+    return f'<span class="peerlegende gebuehrenlegende">{legend}</span>'
+
+
+def build_volume_columns():
+    """Volume moved per block, one bar each, tinted against the 24-hour
+    mean (Jakob, 2026-09-05): the same three steps as the fee bars."""
+    outputs = [e[2] for e in BLOCK_DATA]
+    mean = (sum(outputs) / len(outputs)) if outputs else 0
+    svg = build_columns(outputs, label=t("Volume moved per block over the last 24 hours"),
+                        colours=[fee_tier(v / mean if mean else 0, VOLUME_TIERS)[1]
+                                 for v in outputs],
+                        titles=[t("Block {n} · {v} · {k} transactions", n=format_number(e[0]),
+                                  v=format_btc(e[2]), k=format_number(e[4]))
+                                for e in BLOCK_DATA])
+    if not svg:
+        return None
+    return svg + build_legend((("s1", t("below the 24 h mean")),
+                               ("s2", t("up to twice the mean")),
+                               ("s3", t("above that"))))
 
 
 def build_fee_columns(fees, heights=()):
@@ -604,11 +631,8 @@ def build_fee_columns(fees, heights=()):
                                 for h, f in pairs])
     if not svg:
         return None
-    legend = "".join(
-        f'<span><i class="netzfarbe {cls}"></i>{html_escape(text)}</span>'
-        for cls, text in (("gut", t("up to 2 sat/vB")), ("warn", t("up to 5 sat/vB")),
-                          ("teuer", t("above 5 sat/vB"))))
-    return svg + f'<span class="peerlegende gebuehrenlegende">{legend}</span>'
+    return svg + build_legend((("s1", t("up to 2 sat/vB")), ("s2", t("up to 5 sat/vB")),
+                               ("s3", t("above 5 sat/vB"))))
 
 
 def build_temperature_columns():
@@ -769,11 +793,15 @@ def format_hashrate(hashes):
 def build_hashrate_chart(width=600, height=120):
     """The curve behind the state bar: a line with a soft gradient below,
     drawn like a price chart. Geometry in attributes, colour in classes —
-    the CSP forbids style attributes (see 2026-08-23)."""
-    values = [math.log10(v) for _, v in HASHRATE if v > 0]
+    the CSP forbids style attributes (see 2026-08-23).
+
+    Linear scale since 2026-09-05 (Jakob): across 14 orders of magnitude
+    that is a flat line with the climb at the right — which is what the
+    hashrate actually did, and what he wants to see. Log was 2026-09-03."""
+    values = [v for _, v in HASHRATE if v > 0]
     if len(values) < 3:
         return ""
-    lo, hi = min(values), max(values)
+    lo, hi = 0.0, max(values)
     span = (hi - lo) or 1
     pts = []
     for i, v in enumerate(values):
@@ -999,82 +1027,6 @@ def format_duration(seconds):
     return t("{n} min", n=minutes)
 
 
-# What the difficulty costs, as something one can picture (Jakob,
-# 2026-09-03). Hashrate from the difficulty (D · 2^32 hashes per block at
-# ten minutes), power from an assumed fleet efficiency — the generator never
-# goes online, so this is an estimate by construction and labelled as one.
-# 20 J/TH is a middle value for the 2025/26 fleet (S19 XP ≈ 21, S21 ≈ 17).
-FLEET_EFFICIENCY_J_PER_TH = 20
-# The bar at the foot of the 'Network' card: the world's electricity as
-# 100 %, Bitcoin drawn into it next to things people can place. Annual
-# figures, TWh, all published estimates — the sources and years stand
-# beside them, and the bar says "estimate" (Jakob, 2026-09-03).
-WORLD_ELECTRICITY_TWH = 30_000          # generation 2024, IEA
-ENERGY_PEERS = (
-    # key, TWh per year, colour class
-    ("cooling", 2_000, "e-kuehl"),      # space cooling, IEA (2022)
-    ("datacentres", 415, "e-rz"),       # data centres 2024, IEA Energy and AI
-    ("banking", 264, "e-bank"),         # banking system, Galaxy Digital 2021
-    ("gold", 240, "e-gold"),            # gold mining, Galaxy Digital 2021
-)
-ENERGY_LABELS = {
-    "cooling": lambda: t("air conditioning"),
-    "datacentres": lambda: t("data centres"),
-    "banking": lambda: t("banking system"),
-    "gold": lambda: t("gold mining"),
-}
-
-
-def bitcoin_power_gw(difficulty):
-    hashes_per_second = difficulty * 2 ** 32 / 600
-    return hashes_per_second * FLEET_EFFICIENCY_J_PER_TH / 1e12 / 1e9
-
-
-def energy_comparison(difficulty):
-    """'≈ 18 GW · ≈ 160 TWh a year · 0,53 % of the world's electricity' as
-    escaped markup for a 'grafik' slot — built here from numbers only,
-    nothing foreign goes in."""
-    gigawatt = bitcoin_power_gw(difficulty)
-    twh = gigawatt * 8.766
-    share = twh / WORLD_ELECTRICITY_TWH * 100
-    text = t("≈ {gw} GW · ≈ {twh} TWh a year · {share} % of the world's electricity",
-             gw=decimal_sep(f"{gigawatt:.1f}"), twh=format_number(round(twh)),
-             share=decimal_sep(f"{share:.2f}"))
-    return f"<span class=vergleich>{html_escape(text)}</span>"
-
-
-def build_energy_bar(difficulty, height=8):
-    """One row per figure, longest bar = largest figure, Bitcoin in block
-    orange, value and share of the world's electricity on the right. The
-    single 100 % bar before it (same evening) showed Bitcoin as a sliver
-    next to slivers — nothing to read off. Every bar carries its value as
-    <title> too."""
-    twh = bitcoin_power_gw(difficulty) * 8.766
-    rows = [("bitcoin", "Bitcoin", twh, "e-btc")] + [
-        (key, ENERGY_LABELS[key](), value, cls) for key, value, cls in ENERGY_PEERS]
-    rows.sort(key=lambda r: -r[2])
-    largest = rows[0][2] or 1
-    parts = []
-    for key, name, value, cls in rows:
-        share = value / WORLD_ELECTRICITY_TWH * 100
-        figure = t("≈ {twh} TWh · {share} %", twh=format_number(round(value)),
-                   share=decimal_sep(f"{share:.2f}"))
-        tip = t("{name}: ≈ {twh} TWh a year · {share} % of the world's electricity",
-                name=name, twh=format_number(round(value)), share=decimal_sep(f"{share:.2f}"))
-        w = value / largest * 100
-        parts.append(
-            f'<span class="ereihe {cls}"><span class=ename>{html_escape(name)}</span>'
-            f'<span class="balken hoch{height}"><svg viewBox="0 0 100 {height}" preserveAspectRatio="none" '
-            f'role="img" aria-label="{html_escape(tip)}"><rect width="{w:.2f}" height="{height}" class="balkenfuellung {cls}">'
-            f"<title>{html_escape(tip)}</title></rect></svg></span>"
-            f"<span class=ewert>{html_escape(figure)}</span></span>")
-    note = t("electricity a year, estimates · share of the world's ≈ {n} TWh (IEA 2024) · Bitcoin from difficulty at {j} J/TH · "
-             "cooling IEA, data centres IEA 2024, banking and gold Galaxy Digital 2021",
-             n=format_number(WORLD_ELECTRICITY_TWH), j=FLEET_EFFICIENCY_J_PER_TH)
-    return (f'<span class=energiereihen>{"".join(parts)}</span>'
-            f"<span class=energienotiz>{html_escape(note)}</span>")
-
-
 def format_magnitude(number):
     """126000000000000 -> 126.0 T — for the network difficulty.
 
@@ -1131,6 +1083,96 @@ def halving_facts(height):
 # Translated fields are lambdas: t() must run after the language is set.
 #   (date, who, where, text)
 CHRONICLE_QUOTES = (
+    # -- Before Bitcoin (Jakob, 2026-09-05): the money and the cryptography
+    # it grew out of, from Bretton Woods through 1971 and the cypherpunks
+    # to the failed digital currencies. Where only the month or the year is
+    # known the date is written that short — no day is invented.
+    # -- Central banking, from the Bank of England to the Fed and the end
+    # of gold (Jakob, 2026-09-05, along the story Griffin tells in "The
+    # Creature from Jekyll Island"). Events in our own words, the two
+    # quotations are public domain (Jackson's veto message, Wilson's
+    # "The New Freedom"); nothing from the book itself.
+    ("1694-07-27", "Bank of England", "royal charter",
+     "The Bank of England is chartered to lend the Crown 1.2 million pounds: the first modern central bank"),
+    ("1791-02-25", "George Washington", "First Bank of the United States",
+     "Hamilton's national bank is chartered for twenty years over Jefferson's objection"),
+    ("1816-04-10", "James Madison", "Second Bank of the United States",
+     "A second national bank is chartered after the inflation of the War of 1812"),
+    ("1832-07-10", "Andrew Jackson", "veto message",
+     "It is to be regretted that the rich and powerful too often bend the acts of government to their selfish purposes."),
+    ("1862-02-25", "Legal Tender Act", "greenbacks",
+     "The Union prints paper money that is legal tender by law, backed by nothing but the government's word"),
+    ("1873-02-12", "Coinage Act", "the Crime of '73",
+     "Silver is demonetised; the United States moves to a de facto gold standard"),
+    ("1900-03-14", "Gold Standard Act", "law",
+     "The dollar is defined as 25.8 grains of gold, nine-tenths fine"),
+    ("1907-10-22", "Knickerbocker Trust", "Panic of 1907",
+     "A bank run in New York spreads through the country; J. P. Morgan organises the rescue himself"),
+    ("1908-05-30", "Aldrich-Vreeland Act", "law",
+     "Emergency currency and a National Monetary Commission to study a central bank"),
+    ("1910-11-22", "Jekyll Island", "secret meeting",
+     "Senator Aldrich and bankers from Morgan, Rockefeller and Kuhn, Loeb draft a central bank plan in secret"),
+    ("1913-02-03", "16th Amendment", "ratified",
+     "Congress may tax incomes; the federal income tax follows the same year"),
+    ("1913-12-23", "Woodrow Wilson", "Federal Reserve Act",
+     "The Federal Reserve Act is signed two days before Christmas"),
+    ("1913", "Woodrow Wilson", "The New Freedom",
+     "A great industrial nation is controlled by its system of credit. Our system of credit is concentrated."),
+    ("1914-11-16", "Federal Reserve", "opening",
+     "The twelve Federal Reserve Banks open for business"),
+    ("1929-10-24", "Wall Street", "Black Thursday",
+     "The stock market crashes; the Great Depression begins"),
+    ("1933-04-05", "Franklin D. Roosevelt", "Executive Order 6102",
+     "Americans must hand their gold to the Federal Reserve at 20.67 dollars an ounce"),
+    ("1934-01-30", "Gold Reserve Act", "law",
+     "The dollar is devalued to 35 dollars an ounce; the gold belongs to the Treasury now"),
+    ("1965-07-23", "Coinage Act", "law",
+     "Silver is removed from dimes and quarters; coins become tokens"),
+    ("1968-03-18", "Congress", "law",
+     "The last gold cover for Federal Reserve notes is removed"),
+    ("1944-07-22", "Bretton Woods", "conference",
+     "44 nations peg their currencies to the dollar, and the dollar to gold at 35 an ounce"),
+    ("1971-08-15", "Richard Nixon", "television address",
+     "The dollar's convertibility into gold is suspended; money is now backed by trust alone"),
+    ("1974-12-31", "United States", "law",
+     "Americans may own gold again, forty-one years after the confiscation"),
+    ("1999-11-12", "Gramm-Leach-Bliley Act", "law",
+     "Glass-Steagall is repealed; commercial and investment banking merge again"),
+    ("1976-11", "Whitfield Diffie, Martin Hellman", "New Directions in Cryptography",
+     "Public-key cryptography is born"),
+    ("1983", "David Chaum", "Blind signatures for untraceable payments",
+     "Digital cash that cannot be traced is described for the first time"),
+    ("1990", "David Chaum", "DigiCash",
+     "DigiCash is founded in Amsterdam to bring untraceable e-cash to banks"),
+    ("1992-09", "Cypherpunks", "mailing list",
+     "The cypherpunks mailing list starts in the Bay Area"),
+    ("1993-03-09", "Eric Hughes", "A Cypherpunk's Manifesto",
+     "Privacy is necessary for an open society in the electronic age."),
+    ("1996", "e-gold", "launch",
+     "e-gold launches: digital money backed by gold in a vault"),
+    ("1997-03-28", "Adam Back", "cypherpunks",
+     "Hashcash: proof of work against spam, later the puzzle Bitcoin miners solve"),
+    ("1998-10-01", "Liberty Dollar", "launch",
+     "A private silver-backed currency goes on sale in the United States"),
+    ("1998-11", "Wei Dai", "b-money",
+     "b-money: an anonymous, distributed electronic cash system, cited in the Bitcoin paper"),
+    ("2004-08-15", "Hal Finney", "RPOW",
+     "Reusable proofs of work: Hashcash tokens that can be passed on"),
+    ("2005-12", "Nick Szabo", "Bit gold",
+     "Bit gold, the design closest to Bitcoin, is published"),
+    ("2007-04-27", "e-gold", "indictment",
+     "e-gold is indicted for money laundering; it never recovers"),
+    ("2007-11-14", "FBI", "Liberty Dollar",
+     "The Liberty Dollar's offices are raided and its silver seized"),
+    ("2008-08-18", "bitcoin.org", "domain",
+     "The domain bitcoin.org is registered"),
+    ("2008-09-15", "Lehman Brothers", "bankruptcy",
+     "Lehman Brothers files for bankruptcy, the largest in US history"),
+    ("2011-03-18", "Liberty Dollar", "verdict",
+     "Its founder is convicted; the currency is finished"),
+    ("2013-05-28", "Liberty Reserve", "shutdown",
+     "Liberty Reserve is shut down; prosecutors speak of 6 billion dollars laundered"),
+    # -- Bitcoin's own words
     ("2008-10-31", "Satoshi Nakamoto", "Cryptography Mailing List",
      "I've been working on a new electronic cash system that's fully peer-to-peer, with no trusted third party."),
     ("2008-11-07", "Hal Finney", "Cryptography Mailing List",
@@ -1175,26 +1217,106 @@ CHRONICLE_QUOTES = (
      "I've moved on to other things. It's in good hands with Gavin and everyone."),
     ("2013-03-19", "Hal Finney", "bitcointalk",
      "I think I was the first person besides Satoshi to run bitcoin."),
+    # -- Headlines and milestones (Jakob, 2026-09-05): the events that
+    # made the chain's history, dated, in the order they happened. The
+    # text is a headline in our own words unless it is a quotation (the
+    # genesis block's Times headline is verbatim). Dates from the chain
+    # where the event is a block, otherwise the day the news broke.
+    ("2009-01-03", "The Times", "front page, in the genesis block",
+     "Chancellor on brink of second bailout for banks"),
+    ("2009-01-12", "Block 170", "first transaction",
+     "Satoshi sends 10 BTC to Hal Finney, the first Bitcoin transaction"),
+    ("2010-05-22", "bitcointalk", "Bitcoin Pizza Day",
+     "Two pizzas bought for 10,000 BTC, the first real-world purchase"),
+    ("2010-07-11", "Slashdot", "news",
+     "Bitcoin 0.3 hits the front page, users and price climb within days"),
+    ("2010-07-18", "Mt. Gox", "launch",
+     "Mt. Gox opens as a Bitcoin exchange"),
+    ("2011-02-09", "Slashdot", "news",
+     "Bitcoin reaches parity with the US dollar"),
+    ("2011-04-20", "Forbes", "Crypto Currency",
+     "First big-press feature on Bitcoin"),
+    ("2011-06-01", "Gawker", "Silk Road",
+     "The underground website where you can buy any drug imaginable"),
+    ("2011-06-19", "Mt. Gox", "hack",
+     "Mt. Gox is hacked, the price collapses to a cent on the exchange"),
+    ("2012-11-28", "Block 210,000", "first halving",
+     "The block reward drops from 50 to 25 BTC"),
+    ("2013-03-28", "market", "milestone",
+     "Bitcoin's market capitalisation passes one billion dollars"),
+    ("2013-10-02", "FBI", "Silk Road",
+     "Silk Road is seized and Ross Ulbricht arrested in San Francisco"),
+    ("2013-10-29", "Vancouver", "Robocoin",
+     "The world's first Bitcoin ATM opens in a coffee shop"),
+    ("2013-11-27", "Mt. Gox", "price",
+     "Bitcoin trades above 1,000 dollars for the first time"),
+    ("2013-12-05", "People's Bank of China", "ban",
+     "Chinese financial institutions are barred from handling Bitcoin"),
+    ("2014-02-28", "Mt. Gox", "bankruptcy",
+     "Mt. Gox files for bankruptcy, 850,000 BTC reported missing"),
+    ("2014-03-06", "Newsweek", "The Face Behind Bitcoin",
+     "Newsweek names Dorian Nakamoto as Satoshi; he denies it"),
+    ("2016-07-09", "Block 420,000", "second halving",
+     "The block reward drops from 25 to 12.5 BTC"),
+    ("2017-08-01", "Block 478,558", "fork",
+     "Bitcoin Cash splits off from the chain"),
+    ("2017-08-24", "Block 481,824", "SegWit",
+     "Segregated Witness activates"),
+    ("2017-12-17", "market", "all-time high",
+     "Bitcoin nears 20,000 dollars, CME futures start the next day"),
+    ("2020-05-11", "Block 630,000", "third halving",
+     "The block reward drops from 12.5 to 6.25 BTC"),
+    ("2021-02-08", "Tesla", "SEC filing",
+     "Tesla discloses 1.5 billion dollars in Bitcoin"),
+    ("2021-09-07", "El Salvador", "Bitcoin Law",
+     "Bitcoin becomes legal tender in El Salvador"),
+    ("2021-11-10", "market", "all-time high",
+     "Bitcoin passes 69,000 dollars"),
+    ("2021-11-14", "Block 709,632", "Taproot",
+     "Taproot activates"),
+    ("2022-11-11", "FTX", "bankruptcy",
+     "FTX files for bankruptcy"),
+    ("2024-01-10", "SEC", "ETF",
+     "The SEC approves spot Bitcoin ETFs in the United States"),
+    ("2024-04-20", "Block 840,000", "fourth halving",
+     "The block reward drops from 6.25 to 3.125 BTC"),
+    ("2024-12-05", "market", "milestone",
+     "Bitcoin crosses 100,000 dollars"),
 )
 
 def chronicle_date(iso):
-    y, m, d = iso.split("-")
-    return f"{d}.{m}.{y}" if LANGUAGE == "de" else iso
+    """'2008-10-31' -> '31.10.2008'; a month or a year alone stays that
+    short ('11.1976', '1983') — early events have no known day."""
+    if LANGUAGE != "de":
+        return iso
+    return ".".join(reversed(iso.split("-")))
 
 
 def chronicle_entries():
     """The quotes as the browser and the page use them."""
-    # zeile1 is the prompt — date, who, where — shown at once in orange;
-    # zeile2 the quote, typed after it, all in one flowing line (Jakob,
-    # 2026-09-03: like someone typing into a terminal, the prompt in front).
-    return [{"zeile1": f"<{chronicle_date(date)} {who} · {where() if callable(where) else where}>",
-             "zeile2": f" {text}"}
-            for date, who, where, text in CHRONICLE_QUOTES]
+    # Three parts, typed one after the other, each with its own colour:
+    # the date (green), the name (the log's muted orange), the quote
+    # (white) — "DD.MM.YYYY Name : quote" (Jakob, 2026-09-05; the angle
+    # brackets around the name lasted an hour). The source stays in
+    # CHRONICLE_QUOTES for the record but is no longer shown.
+    # Sorted by date here, whatever the order in the table: the line must
+    # run forward through history (Jakob, 2026-09-05). The colon between
+    # name and text went the same evening — the colours separate them.
+    return [{"teile": [f"[{chronicle_date(date)}] ", who, f" {text}"]}
+            for date, who, where, text in sorted(CHRONICLE_QUOTES, key=lambda q: q[0])]
+
+
+# When the generator started, whole seconds. The chronicle counts its
+# entries from here, so every restart of the service begins at Bretton
+# Woods (Jakob, 2026-09-05) — before, entry number floor(now / takt)
+# landed anywhere in history. The browser gets the same origin through
+# chronik.json and does the same arithmetic.
+CHRONICLE_ORIGIN = int(time.time())
 
 
 def chronicle_text():
     """chronik.json — written once at start, like stil.css."""
-    return json.dumps({"zitate": chronicle_entries()},
+    return json.dumps({"start": CHRONICLE_ORIGIN, "zitate": chronicle_entries()},
                       ensure_ascii=False, separators=(",", ":"))
 
 
@@ -1203,15 +1325,17 @@ def build_chronicle(interval):
     number (now // interval) — the same arithmetic dash.js uses, so a page
     reload lands on the entry the animation would be at."""
     quotes = chronicle_entries()
-    entry = quotes[int(time.time() // max(1, interval)) % len(quotes)]
-    # The line is centred on the page and sized by its content, so the
-    # typing grows out of the middle, symmetrical at every moment (Jakob,
-    # 2026-09-03). A hidden full-text 'schatten' used to fix the width in
-    # advance — dropped for exactly that reason.
+    entry = quotes[int((time.time() - CHRONICLE_ORIGIN) // max(1, interval)) % len(quotes)]
+    # A fixed box on the right half of the header, flush with the right
+    # column of the page below; the text starts at that edge and wraps
+    # only at the right margin (Jakob, 2026-09-05, fourth arrangement of
+    # the day). Two lines are reserved, so nothing moves while typing and
+    # the cursor of the empty line always stands at the same spot. The
+    # hidden full-text shadow of the afternoon is not needed any more.
+    spans = "".join(f'<span class=tz{i + 1}>{html_escape(part)}</span>'
+                    for i, part in enumerate(entry["teile"]))
     return ('<div class=chronik id=chronik><div class="term zitat">'
-            f'<span class=tz1>{html_escape(entry["zeile1"])}</span>'
-            f'<span class=tz2>{html_escape(entry["zeile2"])}</span>'
-            "<span class=cursor></span></div></div>")
+            f"<span class=tipp>{spans}<span class=cursor></span></span></div></div>")
 
 
 def build_progress_curve(width=300, height=54):
@@ -1365,6 +1489,9 @@ def collect_system(cfg):
     if cpu is not None:
         fields.append((t("Load"), decimal_sep(f"{cpu:.0f} % CPU"),
                        "warn" if cpu >= 85 else ""))
+        # As a bar too, like the disk (Jakob, 2026-09-05).
+        fields.append(("", build_bar(cpu / 100, "warn" if cpu >= 85 else "",
+                                     title=decimal_sep(f"{cpu:.0f} % CPU")), "grafik"))
 
     meminfo = read_file("/proc/meminfo", "") or ""
     total = available = 0
@@ -1381,6 +1508,9 @@ def collect_system(cfg):
                total=format_bytes(total)),
              "warn" if used / total > 0.92 else "")
         )
+        fields.append(("", build_bar(used / total, "warn" if used / total > 0.92 else "",
+                                     title=t("{used} of {total}", used=format_bytes(used),
+                                             total=format_bytes(total))), "grafik"))
 
     try:
         # shutil.disk_usage instead of os.statvfs: the test run also has to
@@ -1540,23 +1670,20 @@ def collect_node(cfg):
             rate_text = t("{n} pp/h", n=decimal_sep(f"{per_hour:.2f}"))
             eta_text = format_duration(seconds_left)
 
-    # --- Network facts: difficulty and energy --------------------------------
+    # --- Network facts: difficulty --------------------------------------------
     # Cut down on 2026-09-03 (Jakob): the right-hand column of the 'Network'
     # card keeps only the difficulty and the count to the next adjustment;
     # reward and halving moved to the state bar, the adjustment history is
-    # gone. In its place a tangible comparison of what the difficulty costs.
+    # gone. The energy estimate and the electricity comparison that stood
+    # here for two days left on 2026-09-05 (Jakob) — the card now shares its
+    # width with the Electrum column instead.
     difficulty = float(chain.get("difficulty", 0))
     # The count to the next adjustment is always known — it depends only on
     # the header height, not on the history buffer.
     retarget_left = RETARGET_INTERVAL - (headers % RETARGET_INTERVAL)
     chain_fields = [
-        (t("Chain"), "", "spalte"),
         (t("Difficulty"), format_magnitude(difficulty), ""),
         (t("next adjustment"), t("in {n} blocks|dativ", n=format_number(retarget_left)), ""),
-        (t("energy · estimate at {j} J/TH", j=FLEET_EFFICIENCY_J_PER_TH),
-         energy_comparison(difficulty), "grafik"),
-        # Across both columns, at the foot of the card (class "fuss").
-        (t("electricity in comparison"), build_energy_bar(difficulty), "fuss"),
     ]
 
     net_fields = [
@@ -1575,8 +1702,13 @@ def collect_node(cfg):
     # — only their fees (total_fee); summing the outputs would mean a call
     # per transaction, tens of thousands every cycle.
     fill = min(1.0, usage / max_usage) if max_usage else 0.0
+    # One column 'Chain & Mempool' since 2026-09-05 (Jakob): the card is
+    # about 30 rem wide on the Pi's page, and three columns — chain, mempool,
+    # Electrum — would break every value in two. Two fit; the Electrum
+    # column is the other one, and both end on a bar at the same height.
     mempool_fields = [
-        (t("Mempool"), "", "spalte"),
+        (t("Chain & Mempool"), "", "spalte"),
+        *chain_fields,
         (t("Memory use"),
          (t("{used} of {total}", used=format_bytes(usage), total=format_bytes(max_usage))
           if max_usage else format_bytes(usage)),
@@ -1675,13 +1807,12 @@ def collect_node(cfg):
             (t("Transactions"), format_number(sum(counts)), ""),
             (t("Blocks"),
              t("{n} · {h} h", n=len(BLOCK_DATA), h=f"{hours:.0f}"), ""),
-            (t("Volume per block"),
-             build_columns(outputs, "var(--akzent)",
-                          t("Volume moved per block over the last 24 hours"),
-                          titles=[t("Block {n} · {v} · {k} transactions", n=format_number(e[0]),
-                                    v=format_btc(e[2]), k=format_number(e[4]))
-                                  for e in BLOCK_DATA]),
-             "grafik"),
+            # The label names the scale's top — the bars have no axis, and
+            # a bar without a number is a shape (Jakob, 2026-09-05). Each
+            # bar still carries its exact value as a tooltip.
+            (t("{label} · peak {v}", label=t("Volume per block"),
+               v=format_btc(max(outputs) if outputs else 0)),
+             build_volume_columns(), "grafik"),
         ]
 
         latest_fee = fees[-1] if fees else 0
@@ -1695,7 +1826,8 @@ def collect_node(cfg):
              t("{von} to {bis} sat/vB",
                von=f"{min(known) if known else 0:.0f}",
                bis=f"{max(known) if known else 0:.0f}"), ""),
-            (t("average fee per block"),
+            (t("{label} · peak {v}", label=t("average fee per block"),
+               v=decimal_sep(f"{(max(known) if known else 0):.1f} sat/vB")),
              build_fee_columns(fees, [e[0] for e in BLOCK_DATA]),
              "grafik"),
         ]
@@ -1706,8 +1838,10 @@ def collect_node(cfg):
     # One card 'Network' with two inner columns — mempool left, chain right
     # — instead of two narrow cards. Together with 'System' that makes two
     # equal cards in the row (2026-09-01).
+    # Since 2026-09-05 the Electrum server is its third column; one_pass
+    # merges it in, so the identity carries both names.
     groups = [
-        ("Network", mempool_fields + chain_fields),
+        ("Network & Electrum", mempool_fields),
         ("Volume · 24 hours", volume_fields, volume_note),
         ("Fee history · 24 hours", fee_fields_24, fee_note),
     ]
@@ -2369,10 +2503,11 @@ def build_network_map(peers, kz=None):
             nabe_x = mx - LOGO_R - 5
 
         kind = p["netz"] if p["netz"] in NETWORK_COLOURS else "neutral"
-        # All dots filled since 2026-09-02. Hollow used to mean inbound,
-        # but the direction is written on the line anyway and the legend
-        # entry explaining the fill was one item too many.
-        filled = " voll"
+        # Filled = outbound, hollow ring = inbound. Was dropped on
+        # 2026-09-02 (direction stands on the line anyway) and came back on
+        # 2026-09-05 (Jakob): the word is on the line, but the eye needs it
+        # on the dot. Two legend entries explain it.
+        filled = "" if p["eingehend"] else " voll"
         # The path of the most recent block: solid orange spoke to the peer
         # that announced it first, a solid spoke in its own colour to the
         # one that delivered it (only when that is a different peer — with
@@ -2729,7 +2864,13 @@ def collect_electrum(cfg, tip=None):
     port = cfg["ELECTRS_PORT"]
     reachable = port_open("127.0.0.1", port) if running else False
 
+    # Since 2026-09-05 (Jakob) this is the third inner column of the
+    # 'Network & Electrum' card, not a card of its own: the "spalte" marker
+    # opens the column, the copy fields land under all three columns. Where
+    # there is no network card (node unreachable), one_pass shows the
+    # fields as a card of their own.
     fields = [
+        ("Electrum", "", "spalte"),
         (t("Service"), t("running") if running else t("stopped"),
          "gut" if running else "warn"),
         (t("Responding"), t("yes") if reachable else t("no, still indexing"),
@@ -2745,23 +2886,22 @@ def collect_electrum(cfg, tip=None):
     if indexed and tip and indexed <= tip:
         behind = max(0, tip - indexed)
         fraction = min(1.0, indexed / tip) if tip else 0
+        # The value is short since 2026-09-05 — in the half card the old
+        # "complete · block 965.530" broke in two (Jakob). The heights
+        # moved into the bar's tooltip.
+        heights = t("{n} of {tip} bloecke", n=format_number(indexed),
+                    tip=format_number(tip))
         if behind <= 1:
-            fields.append((t("Index"),
-                           t("complete · block {n}", n=format_number(indexed)),
-                           "gut"))
-            fields.append(("", build_bar(1.0), "grafik"))
+            fields.append((t("Index"), t("complete"), "gut"))
+            fields.append(("", build_bar(1.0, title=heights), "grafik"))
         else:
             # Close to the tip a percentage says "100,0 %" while blocks are
             # still missing — there the count is the honest figure.
             rest = (t("{n} bloecke to go", n=format_number(behind))
                     if fraction >= 0.999
                     else decimal_sep(f"{fraction * 100:.1f} %"))
-            fields.append((t("Index"),
-                           t("{n} of {tip} bloecke · {rest}",
-                             n=format_number(indexed), tip=format_number(tip),
-                             rest=rest),
-                           "warn"))
-            fields.append(("", build_bar(fraction, "warn"), "grafik"))
+            fields.append((t("Index"), rest, "warn"))
+            fields.append(("", build_bar(fraction, "warn", title=heights), "grafik"))
     elif running:
         fields.append((t("Index"), t("progress not readable"), "leer"))
 
@@ -2805,6 +2945,12 @@ STYLE = """
 /* The path of the most recent block through the map: Bitcoin orange, used
    nowhere else so it stays unmistakable */
 --block:#f7931a;
+/* High fees in the 24-hour bars: a dark violet, not the block orange
+   (Jakob, 2026-09-05) — orange stays the block's colour alone */
+/* The three steps of the 24-hour bars, low to high: neutral grey, the
+   accent, block orange only at the top (Jakob, 2026-09-05, variant E of
+   five; the one-hue ramp before it read as noise) */
+--stufe1:#4a5361;--stufe2:#2fd39a;--stufe3:#f7931a;
 /* Our own electrs among the peers: a lighter, cooler blue than IPv4 */
 --netz-electrs:#4cc3ff;
 --balken:var(--akzent);
@@ -2826,6 +2972,7 @@ STYLE = """
 --akzent:#0d9c6b;--warn:#b8791a;--fehler:#d33f3c;--info:#2b6fd0;
 --netz-ipv4:#2b6fd0;--netz-ipv6:#6a52e0;--netz-onion:#0d9c6b;--netz-i2p:#b0399a;
 --block:#d9780a;
+--stufe1:#b4b2a9;--stufe2:#0d9c6b;--stufe3:#d9780a;
 --netz-electrs:#0e8ed0;
 --schatten:0 1px 2px rgba(16,19,25,.05),0 8px 24px -14px rgba(16,19,25,.22)}}
 
@@ -2886,14 +3033,24 @@ container-type:inline-size}
 .links:has(#z-weit:empty) #z-band{flex-grow:1}
 
 /* ----------------------------------------------------------- Kopfzeile --- */
-header{display:flex;flex-wrap:wrap;gap:var(--e1) var(--e4);align-items:center;
-padding-bottom:var(--e3);border-bottom:1px solid var(--rand)}
+/* Two halves with the same gap as the rows below: brand, versions and
+   clock on the left, the chronicle on the right, its left edge the left
+   edge of the network card (Jakob, 2026-09-05). */
+/* align-items:start, not center: the terminal reserves two lines, and
+   the brand row must sit on its FIRST line — one baseline across the
+   header (Jakob, 2026-09-05). Same font size and line-height on both
+   sides, and the brand mark no taller than the line, or it lifts the row. */
+header{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--e1) var(--e4);
+align-items:start;padding-bottom:var(--e3);border-bottom:1px solid var(--rand)}
+@media(min-width:80rem){header{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+.kopfgruppe{display:flex;flex-wrap:wrap;gap:var(--e1) var(--e4);
+align-items:center;min-width:0;line-height:1.4;min-height:1.4em}
 /* One typeface and size across the header row — brand, quote, versions,
    clock all in the mono at .73rem, on one baseline (Jakob, 2026-09-03). */
 h1{font-size:.73rem;font-family:var(--mono);font-weight:600;display:flex;
 align-items:center;gap:var(--e2);white-space:nowrap}
 h1 b{font-weight:400;color:var(--sehrleise);letter-spacing:0}
-.marke{width:1.15rem;height:1.15rem;flex:none;display:block}
+.marke{width:1em;height:1em;flex:none;display:block}
 .kopfrechts{display:flex;align-items:center;gap:var(--e3);
 color:var(--sehrleise);font-size:.73rem;font-family:var(--mono)}
 /* Middle of the header: versions and uptime. Replaces the 'Updates' card —
@@ -2905,9 +3062,10 @@ cursor:default;white-space:nowrap}
 background:var(--akzent)}
 .kopfinfo.warn{color:var(--warn)}
 .kopfinfo.warn .kpunkt{background:var(--warn)}
-@media(max-width:60rem){#z-kopf{order:3;flex-basis:100%;margin-left:0}
-.chronik{position:static;transform:none;order:4;flex:1 1 100%;max-width:100%}
-.term{margin-inline:auto}}
+/* Narrow windows (phone): the versions take a row of their own under
+   the brand. */
+@media(max-width:60rem){#z-kopf{flex-basis:100%;margin-left:0}
+.kopfrechts{margin-right:0}}
 /* The pulse shows that the page updates itself. Without JavaScript it
    simply stands still — which is more honest than blinking into the void. */
 .puls{width:.4rem;height:.4rem;border-radius:99px;background:var(--sehrleise);
@@ -2924,25 +3082,38 @@ box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 22%,transparent)}
    dash.js via textContent, one entry per data cycle (2026-09-03). */
 /* In the header row, between brand and versions: two lines at most, fixed
    height, so the typing never moves the row. */
-/* Brand left, versions and clock at the right edge (auto margin on the
-   ZONE wrapper #z-kopf, not on .kopfinfo inside it — there it did nothing,
-   2026-09-03). The quote is taken out of the flow and pinned to the page's
-   centre line: its box is as wide as the text typed so far, so it grows
-   out of the middle and is symmetrical at every moment. */
-header{position:relative}
+/* Versions and clock centred in what the brand leaves of the left half:
+   auto margins on both sides of the pair (on the ZONE wrapper #z-kopf,
+   not on .kopfinfo inside it — there it did nothing, 2026-09-03). The
+   chronicle fills the right half: a fixed box,
+   the text starts at its left edge and wraps only at the right margin;
+   two lines are reserved so the header never moves while typing and the
+   cursor of the empty line always stands at the same spot (Jakob,
+   2026-09-05 — the centred, shrink-to-fit box before it re-centred for
+   every entry and the cursor jumped). */
 #z-kopf{margin-left:auto}
-.chronik{position:absolute;left:50%;top:0;transform:translateX(-50%);
-max-width:60%;min-width:0}
+.kopfrechts{margin-right:auto}
+.chronik{min-width:0}
 .term{padding:0;font-family:var(--mono);font-size:.73rem;line-height:1.4;
-color:var(--text);height:1.4em;width:max-content;max-width:100%;
-overflow:hidden;white-space:nowrap;box-sizing:border-box}
+color:var(--text);width:100%;min-height:2.8em;white-space:normal;
+overflow-wrap:anywhere;text-align:left;box-sizing:border-box}
+@media(max-width:60rem){.term{min-height:4.2em}}
+.term .tipp{display:block}
+/* A faint phosphor glow on the line — a hint of the tube, not a CRT
+   costume (Jakob, 2026-09-05). */
+.term .tipp{text-shadow:0 0 6px color-mix(in srgb,var(--akzent) 25%,transparent)}
 /* No box, no green: written straight into the header, white text, the
    attribution muted (Jakob, 2026-09-03). */
 /* The prompt in a dark, quiet green — block orange was too loud up here
    (Jakob, 2026-09-03). */
+/* Date and name in the muted green, quote white (Jakob, 2026-09-05; the
+   name was the log's orange for an hour). */
 .term.zitat .tz1{color:color-mix(in srgb,var(--akzent) 55%,var(--leise))}
-.term .tz2{color:var(--text)}
+.term.zitat .tz2{color:color-mix(in srgb,var(--akzent) 55%,var(--leise))}
+.term .tz3{color:var(--text)}
 .term .cursor::after{content:"▌";color:var(--akzent);animation:blink 1s steps(1) infinite}
+/* Solid while writing, blinking only at rest — as a terminal does. */
+.term.tippt .cursor::after{animation:none}
 @keyframes blink{50%{opacity:0}}
 @media(prefers-reduced-motion:reduce){.term .cursor::after{animation:none}}
 
@@ -3084,6 +3255,10 @@ min-height:calc(var(--zeile) * 2)}
 .spalten{display:grid;grid-template-columns:1fr;gap:var(--e3) var(--e5)}
 @container (min-width:30rem){.spalten{grid-template-columns:1fr 1fr}
 .spalte+.spalte{border-left:1px solid var(--rand);padding-left:var(--e5)}}
+/* The copy fields for the wallet (Electrum column, since 2026-09-05) sit
+   under the columns, one address per line — a 62-character onion address
+   fits into no half card. */
+.spalten+.kopierblock{margin-top:var(--e4)}
 .spalte h3{font-size:.62rem;text-transform:uppercase;letter-spacing:.12em;
 color:var(--sehrleise);font-weight:600;min-height:var(--zeile);
 display:flex;align-items:center;border-bottom:1px solid var(--rand)}
@@ -3160,8 +3335,12 @@ color:var(--sehrleise);font-size:.72rem}
 .netzzahlen b{color:var(--text);font-family:var(--mono);font-weight:600;
 font-variant-numeric:tabular-nums}
 /* Chain check: one dot per sample of the last hour. Green = same height,
-   grey = the stranger is behind, red = the stranger is ahead of us. */
-.abgleich{display:inline-flex;align-items:center;gap:var(--e2)}
+   grey = the stranger is behind, red = the stranger is ahead of us.
+   Always on a line of its own, left-aligned: with more than three dots it
+   wrapped by itself, and the header jumped between one and two lines from
+   cycle to cycle (Jakob, 2026-09-05). */
+.abgleich{display:inline-flex;align-items:center;gap:var(--e2);
+flex-basis:100%;justify-content:flex-start}
 .abgleich.warn{color:var(--fehler)}
 .stiche{display:inline-flex;gap:3px}
 .stich{width:.42rem;height:.42rem;border-radius:99px;display:block}
@@ -3229,6 +3408,10 @@ stroke-width:1.6}
 .peer.ansager .peerpunkt{stroke:var(--block);stroke-width:2.2;
 filter:drop-shadow(0 0 3px var(--block))}
 .netzfarbe.ansager{background:var(--block)}
+/* Direction in the legend: ring = inbound, filled = outbound, in the
+   neutral text colour so no network is implied. */
+.netzfarbe.richtung{background:none;border:1.6px solid var(--leise);box-sizing:border-box}
+.netzfarbe.richtung.voll{background:var(--leise)}
 .peerlegende{display:flex;flex-wrap:wrap;gap:var(--e1) var(--e3);
 color:var(--sehrleise);font-size:.68rem;margin-top:var(--e2)}
 .peerlegende span{display:flex;align-items:center;gap:var(--e1)}
@@ -3242,28 +3425,10 @@ background:var(--leise)}
 /* Fee tiers under the 24-hour bars, same dots as the map legend. */
 .netzfarbe.gut{background:var(--akzent)}
 .netzfarbe.warn{background:var(--warn)}
-.netzfarbe.teuer{background:var(--block)}
+.netzfarbe.s1{background:var(--stufe1)}
+.netzfarbe.s2{background:var(--stufe2)}
+.netzfarbe.s3{background:var(--stufe3)}
 .gebuehrenlegende{margin-top:var(--e1)}
-/* The energy comparison in the chain column: a sentence where the mempool
-   column has its bar, both rows the same height. */
-.vergleich{font-family:var(--mono);font-size:.78rem;color:var(--leise);
-line-height:1.4}
-/* Energy in comparison at the foot of the card: one row per figure —
-   name, bar relative to the largest, value. Bitcoin in block orange, the
-   rest muted. Pointing at a bar shows its value (<title>). */
-.energiereihen{display:grid;grid-template-columns:auto 1fr auto;gap:var(--e1) var(--e3);
-align-items:center;font-size:.78rem;margin-top:var(--e1)}
-.ereihe{display:contents}
-.ename{color:var(--leise);white-space:nowrap}
-.ereihe.e-btc .ename{color:var(--text)}
-.ewert{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:.76rem;
-color:var(--leise);white-space:nowrap;text-align:right}
-.ereihe.e-btc .ewert{color:var(--text)}
-.balkenfuellung.e-btc{fill:var(--block)}
-.balkenfuellung.e-kuehl,.balkenfuellung.e-rz,.balkenfuellung.e-bank,
-.balkenfuellung.e-gold{fill:var(--leise);opacity:.6}
-.energienotiz{display:block;margin-top:var(--e2);color:var(--sehrleise);font-size:.62rem;
-line-height:1.4}
 .balken svg rect:hover,.saeulen rect:hover{opacity:.75}
 /* The detail box has a FIXED height, not a minimum: the peer view (head,
    address, two rows of details) is taller than the resting sentence, and
@@ -3404,7 +3569,7 @@ SCRIPT = r"""
   var letztesLog = null;
 
   var wurzel = document.documentElement;
-  var takt = (Number(wurzel.dataset.intervall) || 30) * 1000;
+  var takt = (Number(wurzel.dataset.interval) || 30) * 1000;
   var logtakt = (Number(wurzel.dataset.logintervall) || 5) * 1000;
   var peers = [];
   var eigen = null;            // this node as its peers see it
@@ -3413,10 +3578,10 @@ SCRIPT = r"""
   var rangliste = "";          // who announced first most often, 24 h
   var erzeugt = 0;             // when status.json was written, unix seconds
 
-  /* Without JS a <meta refresh> reloads the page periodically. With JS that
-     would be harmful: it would reload in the middle of pointing at a dot. */
-  var refresh = document.querySelector('meta[http-equiv="refresh"]');
-  if (refresh) { refresh.remove(); }
+  /* Without JS a <meta refresh> reloads the page periodically; it sits in
+     <noscript>, so with JS it never exists. Removing it from here, as this
+     script did until 2026-09-05, does not stop a reload the browser has
+     already scheduled. */
 
   function hole(pfad, alsText) {
     return fetch(pfad, { cache: "no-store", credentials: "omit" })
@@ -3736,54 +3901,91 @@ SCRIPT = r"""
   richteKopierknoepfe();
 
   /* The chronicle: chronik.json is fetched once; entry number
-     floor(now / takt) — the same arithmetic as the generator's — so the
-     page and the animation agree, and a reload continues where it was. One
-     quote per data cycle, typed like a person types: the cursor sits where
-     the writing is, now and then a wrong key, a short stop, backspace, the
-     right one (Jakob, 2026-09-03). Text goes in via textContent only. */
-  var chronik = null, tippTimer = null;
-  var NACHBARN = { a: "s", s: "d", d: "f", e: "r", r: "t", t: "y", i: "o", o: "p",
-                   n: "m", m: "n", h: "j", u: "i", l: "k", c: "v", w: "e", g: "h" };
-  function tippe(kasten, eintrag) {
-    var z1 = kasten.querySelector(".tz1"), z2 = kasten.querySelector(".tz2"),
-        cursor = kasten.querySelector(".cursor");
-    if (!z1 || !z2 || !cursor) { return; }
+     floor((now - start) / takt) — the same arithmetic as the generator's —
+     so page and script agree. One entry per data cycle.
+
+     Built as a reconciler, not as a sequence (2026-09-05, after an evening
+     of "deletes the wrong text"): the data cycle only sets the TARGET.
+     One loop compares what stands in the line with the target — if the
+     text is a prefix of the target it types the next character, otherwise
+     it deletes the last one; empty after deleting, it breathes 1.4 s with
+     the cursor alone. Whatever the timing of fetches, restarts or tab
+     switches, the loop always deletes exactly what is visible and types
+     exactly the target. A hidden tab gets the target at once: browsers
+     throttle timers there to seconds, and an animation nobody watches
+     would still be running when the tab comes back. Text goes in via
+     textContent only. */
+  var chronik = null, tippTimer = null, letzteNr = -1;
+  var ziel = null, geloescht = false;
+  function chronikFelder() {
+    var kasten = document.querySelector(".term.zitat");
+    if (!kasten) { return null; }
+    var felder = [1, 2, 3].map(function (n) { return kasten.querySelector(".tz" + n); });
+    if (felder.some(function (f) { return !f; })) { return null; }
+    return { kasten: kasten, felder: felder, cursor: kasten.querySelector(".cursor") };
+  }
+  function laufe() {
     if (tippTimer) { clearTimeout(tippTimer); tippTimer = null; }
-    /* The prompt (date, who, where) stands at once; only the quote is typed. */
-    z1.textContent = eintrag.zeile1 || ""; z2.textContent = "";
-    z2.after(cursor);
-    var text1 = "", text2 = eintrag.zeile2 || "";
-    var gesamt = text1.length + text2.length || 1;
-    var schritt = Math.max(14, Math.min(48, Math.floor(takt * 0.6 / gesamt)));
-    var i = 0, fehler = null;
-    function ziel() { return i < text1.length ? z1 : z2; }
-    function weiter() {
-      var feld = ziel(), rest = (feld === z1 ? text1 : text2), k = (feld === z1 ? i : i - text1.length);
-      if (k >= rest.length) { return; }
-      var soll = rest.charAt(k), pause = schritt * (0.7 + Math.random() * 0.6);
-      if (fehler === "tippen") {
-        /* Notice the slip, stop briefly, take it back. */
-        feld.textContent = feld.textContent.slice(0, -1);
-        fehler = null; pause = schritt * 2;
-      } else {
-        var daneben = NACHBARN[soll];
-        if (daneben && Math.random() < 0.035 && k > 0) {
-          feld.textContent += daneben; fehler = "tippen"; pause = schritt * 5;
-        } else {
-          feld.textContent += soll; i += 1;
-          if (soll === "." || soll === "," || soll === "—" || soll === ";") { pause = schritt * 6; }
-        }
-      }
-      tippTimer = setTimeout(weiter, pause);
+    var e = chronikFelder();
+    if (!e || !ziel) { return; }
+    var soll = ziel.join(""), ist = e.felder.map(function (f) { return f.textContent; }).join("");
+    if (document.hidden) {
+      e.felder.forEach(function (f, j) { f.textContent = ziel[j]; });
+      if (e.cursor) { e.felder[2].after(e.cursor); }
+      e.kasten.classList.remove("tippt");
+      return;
     }
-    weiter();
+    if (ist === soll) { e.kasten.classList.remove("tippt"); geloescht = false; return; }
+    var schritt = Math.max(14, Math.min(48, Math.floor(takt * 0.6 / (soll.length || 1))));
+    var loeschen = Math.max(4, Math.min(16, Math.floor(takt * 0.1 / (ist.length || 1))));
+    var pause;
+    if (soll.indexOf(ist) !== 0 || (geloescht && ist !== "")) {
+      /* Not on the way to the target — or already deleting: then all the
+         way down, not just to the common prefix ("[" is a prefix of every
+         entry, and the line would restart from the bracket). */
+      var feld = null;
+      for (var j = 2; j >= 0; j -= 1) { if (e.felder[j].textContent) { feld = e.felder[j]; break; } }
+      e.kasten.classList.add("tippt");
+      if (e.cursor && feld.nextSibling !== e.cursor) { feld.after(e.cursor); }
+      feld.textContent = feld.textContent.slice(0, -1);
+      geloescht = true;
+      pause = loeschen;
+    } else if (ist === "" && geloescht) {
+      /* Emptied: a short breath with only the cursor blinking. */
+      geloescht = false;
+      e.kasten.classList.remove("tippt");
+      pause = 1400;
+    } else {
+      /* On the way: the next character, into the field it belongs to. */
+      var pos = ist.length, n = 0, k = pos;
+      while (n < 2 && k >= ziel[n].length) { k -= ziel[n].length; n += 1; }
+      var zeichen = soll.charAt(pos), ziel_feld = e.felder[n];
+      e.kasten.classList.add("tippt");
+      if (e.cursor && ziel_feld.nextSibling !== e.cursor) { ziel_feld.after(e.cursor); }
+      ziel_feld.textContent += zeichen;
+      /* Rhythm of a hand, not of a ticker: a breath at every space, a
+         longer one at punctuation, quick inside a word. */
+      pause = schritt * (0.6 + Math.random() * 0.5);
+      if (zeichen === " ") { pause = schritt * (1.8 + Math.random()); }
+      if (".,;:\u2014".indexOf(zeichen) >= 0) { pause = schritt * 6; }
+    }
+    tippTimer = setTimeout(laufe, pause);
   }
   function chronikSchritt() {
     if (!chronik || !chronik.zitate.length) { return; }
-    var n = Math.floor(Date.now() / takt);
-    var zitat = document.querySelector(".term.zitat");
-    if (zitat) { tippe(zitat, chronik.zitate[n % chronik.zitate.length]); }
+    /* Counted from the generator's start (chronik.json), not from the
+       epoch: a restart of the service begins the story at the top. The
+       fetches are not aligned to the takt windows, so the same number can
+       come twice near a window's edge — same number, nothing to do. */
+    var n = Math.max(0, Math.floor((Date.now() - (chronik.start || 0) * 1000) / takt));
+    if (n === letzteNr) { return; }
+    letzteNr = n;
+    var eintrag = chronik.zitate[n % chronik.zitate.length];
+    ziel = (eintrag.teile || []).slice(0, 3).map(function (x) { return x || ""; });
+    while (ziel.length < 3) { ziel.push(""); }
+    laufe();
   }
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) { laufe(); } });
   hole("chronik.json", false).then(function (c) {
     if (c && c.zitate) { chronik = c; chronikSchritt(); }
   }).catch(function () { });
@@ -3934,14 +4136,17 @@ def assess_state(error, in_sync, groups, stale_for=None, warming_up=False,
 #   "wide" — half the page width, for graphs with many values
 #   "full" — the whole width, so long addresses fit on one line
 CARDS_WIDE = ("Volume · 24 hours", "Fee history · 24 hours")
-CARDS_FULL = ("Electrum server",)
+# Empty since 2026-09-05: the Electrum card became a column of the network
+# card. The zone and the mechanism stay for the day something needs the
+# full width again.
+CARDS_FULL = ()
 
 # Order inside the grid, spelled out. It used to fall out of the order in
 # which the collect_* functions happen to be called — which is an accident,
 # not a design decision. Anything not listed here is appended at the end.
 CARD_ORDER = (
     "System",
-    "Network",
+    "Network & Electrum",
 )
 
 
@@ -4380,6 +4585,8 @@ def build_network_zone(peers, fallback_fields=None, blocked=False, kz=None,
     legend += (
         '<span><i class="netzfarbe ansager"></i>'
         f"{html_escape(t('announced the last block first'))}</span>"
+        f'<span><i class="netzfarbe richtung voll"></i>{html_escape(t("outbound|richtung"))}</span>'
+        f'<span><i class="netzfarbe richtung"></i>{html_escape(t("eingehend|richtung"))}</span>'
     )
 
     return (
@@ -4546,9 +4753,17 @@ def build_page(cfg, progress, in_sync, groups, error=None,
         '<meta name=viewport content="width=device-width,initial-scale=1">',
         '<meta name=referrer content=no-referrer>',
         f'<meta http-equiv="Content-Security-Policy" content="{csp}">',
-        # Without JavaScript the page reloads through this. With JavaScript
-        # the element is removed at startup.
-        f'<meta http-equiv=refresh content="{interval}">',
+        # Without JavaScript the page reloads through this. Inside
+        # <noscript> since 2026-09-05: dash.js used to remove the element at
+        # startup, but Chrome schedules the reload the moment it parses the
+        # meta, and removing it later cancels nothing. The page therefore
+        # reloaded every cycle under the script — the chronicle never got
+        # to type its second entry, and every "the animation is broken"
+        # report of that evening was this. Seen only by driving the real
+        # page in a browser: performance navigation type "reload" every
+        # 21 s. A <noscript> in <head> may hold meta and is honoured only
+        # when scripts are off.
+        f'<noscript><meta http-equiv=refresh content="{interval}"></noscript>',
         f'<link rel=icon href="{favicon}">',
         f'<link rel=stylesheet href="stil.css?v={STYLE_V}">',
         # <title>, not <titel>: the rename of 2026-08-23 hit this tag too.
@@ -4559,15 +4774,19 @@ def build_page(cfg, progress, in_sync, groups, error=None,
         "</head><body><div class=huelle>",
         # The brand mark is the same logo the network map's hub carries
         # (Jakob, 2026-09-03), not a green dot.
-        f'<header><h1><img class=marke src="bitcoin.png?v={BITCOIN_V}" alt="">{hostname} '
-        f"<b>· BTC Fullnode</b></h1>"
-        # The chronicle sits in the header row itself, right after the
-        # brand, and takes the width between brand and versions — no
-        # second row, the header stays as flat as it can (Jakob, 2026-09-03).
-        + build_chronicle(int(cfg.get("INTERVAL", 21))) +
-        f'<div id=z-kopf>{zones["kopf"]}</div>',
+        # Two halves like the rows below: brand at the left edge, versions
+        # and clock centred in the rest of the left half, the chronicle on
+        # the right, flush with the right column of the page (Jakob,
+        # 2026-09-05, after the screenshot). Before that the chronicle sat
+        # between brand and versions in one row.
+        '<header><div class=kopfgruppe>'
+        f'<h1><img class=marke src="bitcoin.png?v={BITCOIN_V}" alt="">{hostname} '
+        f"<b>· Bitcoin Fullnode</b></h1>"
+        f'<div id=z-kopf>{zones["kopf"]}</div>'
         f'<div class=kopfrechts><span class=puls></span>'
         f'<span id=stempel>{now.strftime(TIME_FORMAT[LANGUAGE])}</span></div>'
+        "</div>"
+        + build_chronicle(int(cfg.get("INTERVAL", 21))) +
         "</header>",
         # Two columns: everything interpreted on the left, the raw log at
         # full height on the right. On narrow screens the grid collapses back
@@ -4853,7 +5072,18 @@ def one_pass(cfg):
 
     electrum = collect_electrum(cfg, (summary or {}).get("bloecke"))
     if electrum:
-        groups.append(electrum)
+        # Into the network card as its third column. A new tuple, never
+        # extend() — in the tolerance window 'groups' comes from LAST_STATE,
+        # and an in-place change would grow that card by one Electrum
+        # column per cycle.
+        merged = False
+        for i, group in enumerate(groups):
+            if group[0] == "Network & Electrum":
+                groups[i] = (group[0], list(group[1]) + electrum[1], electrum[2])
+                merged = True
+                break
+        if not merged:
+            groups.append(electrum)
 
     # System before updates: first the state of the machine, then the note
     # about whether new releases are waiting.

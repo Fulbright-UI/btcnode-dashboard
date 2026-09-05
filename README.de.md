@@ -37,9 +37,13 @@ danach; ändern lässt es sich später mit einer Zeile in der Konfiguration.
   Knoten nach seiner Höhe — die Abwehr gegen eine untergeschobene Kette. Die
   Stichproben der letzten Stunde stehen als Punktreihe im Kopf der Netzkarte;
   meldet ein Knoten mehr Blöcke als du hast, erscheint oben eine Meldung
-- **Ein Satz aus den frühen Tagen** in der Kopfzeile, getippt wie in ein
-  Terminal — Cryptography-Mailingliste, P2P Foundation, bitcointalk —, ein
-  Zitat je Datenabruf, Wortlaut gegen das Nakamoto Institute geprüft
+- **Eine Zeitleiste in der Kopfzeile**, getippt wie in ein Terminal, ein
+  Eintrag je Datenabruf und chronologisch: von der Bank of England, Jekyll
+  Island und dem Federal Reserve Act über Bretton Woods, 1971 und die
+  Cypherpunks zu Satoshis eigenen Worten (gegen das Nakamoto Institute
+  geprüft), dem Genesis-Block, Mt. Gox, Silk Road, den Halbierungen und dem
+  ETF. Jeder Neustart des Dienstes beginnt oben; vor einem neuen Eintrag
+  wird der alte rückwärts gelöscht
 - **Systemzustand** des Rechners: die Temperatur des Tages als ein Balken je
   Stunde, CPU, Arbeitsspeicher, Plattenplatz — bei einem Raspberry Pi auch
   die Stromversorgung, weil Unterspannung die häufigste Ursache beschädigter
@@ -47,16 +51,17 @@ danach; ändern lässt es sich später mit einer Zeile in der Konfiguration.
 - **Die Gebühr, die man nehmen sollte**: Cores sparsame Schätzung für den
   nächsten Block, groß im Kopf, darunter die vorsichtige, wenn sie abweicht
 - **Tage bis zur Halbierung**, mit Datum und den Blöcken, die noch fehlen
-- **Mempool** (Speicher, wartende Gebühren, Füllstand) und **Kette**
-  (Schwierigkeit, nächste Anpassung), dazu eine Schätzung, wie viel Strom
-  die Schwierigkeit bedeutet — aus der Hashrate bei angenommener
-  Flotteneffizienz, als Balken neben Klimaanlagen, Rechenzentren, Bankwesen
-  und Goldförderung
+- **Kette, Mempool und Electrum** in einer Karte: Schwierigkeit, nächste
+  Anpassung, Mempool-Speicher, wartende Gebühren und Füllstand in der
+  linken Spalte; rechts der Electrum-Server, falls einer läuft, mit einem
+  Balken, wie weit sein Index ist; darunter die Adressen für die Wallet
+  mit Kopierknopf
 - **Volumen und Gebührenverlauf** der letzten 24 Stunden, ein Balken je
-  Block, Gebühren nach Stufe gefärbt; jeder Balken der Seite zeigt beim
-  Zeigen seinen Wert
-- **Electrum-Server**, falls einer läuft, mit den Adressen für die Wallet,
-  einem Kopierknopf daneben und einem Balken, wie weit sein Index ist
+  Block, in drei Stufen — Grau, Grün, Block-Orange — Gebühren nach sat/vB,
+  Volumen gegen das Tagesmittel; die Beschriftung nennt die Spitze, jeder
+  Balken der Seite zeigt beim Zeigen seinen Wert
+- **Hashrate seit 2009** als Kurve hinter dem Zustandsbalken, linear, mit
+  der Veränderung zum Vorjahr
 - **Protokoll** des Nodes, mitlaufend — angenommene Blöcke orange, ihre
   Ankündigungen gedämpft, Stichproben des Kettenabgleichs grün, Fehler und
   Warnungen rot und gelb. Die Zeilen bleiben reiner Text; nur die Farbe
@@ -208,7 +213,10 @@ nichts: **Die Schnittstelle ist eine statische Datei.** Der Generator schreibt
 die Werte nach. Es gibt keinen Endpunkt, der etwas entgegennimmt.
 
 Ohne JavaScript funktioniert alles weiter — die Seite holt sich dann über ein
-`<meta http-equiv=refresh>` neu.
+`<meta http-equiv=refresh>` in `<noscript>` neu. Absichtlich in `<noscript>`:
+ein Refresh außerhalb wird vom Browser beim Parsen eingeplant, und ein
+Skript, das das Element danach entfernt, hebt nichts auf — die Seite lud
+sich unter dem Skript jeden Takt neu (3.4).
 
 Erzeugt werden:
 
