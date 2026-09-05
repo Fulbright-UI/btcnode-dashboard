@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "3.5.2"
+VERSION = "3.5.3"
 
 # ================================================================= Language ==
 # English is the source language: the code carries the English text, the table

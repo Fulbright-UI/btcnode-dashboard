@@ -319,6 +319,15 @@ mit HTTP 403, so wie eine fehlende Whitelist-Eintragung es täte.
 Die erzeugte Seite liegt danach in `tests/ausgabe/index.html` und lässt sich im
 Browser öffnen.
 
+```bash
+bash tests/install-test.sh                  # der Firewall-Teil von install.sh
+```
+
+führt die Firewall-Funktion aus `install.sh` gegen eine `ufw`-Attrappe im
+`$PATH` aus — ohne Root, ohne echte Firewall. Sie gibt es, weil nichts in
+`probelauf.py` eine Zeile des Installers ausführt, und der erste dort
+gefundene Fehler Regeln löschte (06.09.2026).
+
 Rund 220 Prüfungen laufen dabei durch, in beiden Sprachen: Wohlgeformtheit des
 HTML, keine Schaltflächen, die den Node erreichen, keine Inline-Stile, der
 richtige Dezimaltrenner, Maskierung fremder Werte, das Toleranzfenster in beide

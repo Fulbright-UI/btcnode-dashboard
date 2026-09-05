@@ -114,6 +114,32 @@ need_package() {
     fi
 }
 
+# The one comment that says "this rule is ours". Set on the way in, matched
+# on the way out.
+UFW_MARK='node dashboard LAN'
+
+# Delete every ufw rule that carries our comment — and only those.
+# Until 2026-09-06 this matched on the port: grep "80/tcp" with no anchor,
+# which also hits 8080/tcp, 1080/tcp, 3080/tcp, and the loop deleted them
+# all without a word. The script even recommends --port 8080 two screens
+# up. Reported from outside with a reproduction; no test had ever run a
+# line of this file. The comment is the only thing that marks a rule as
+# ours, so that is what we match — anchored to the end of the line.
+# And --force instead of "yes |": under pipefail, yes dies of SIGPIPE the
+# moment ufw exits, the pipeline reports failure, and "|| break" left the
+# loop after the first of two rules (v4 deleted, v6 kept — seen in the
+# test below, the same day).
+ufw_delete_marked() {
+    local nr
+    while :; do
+        nr="$(ufw status numbered 2>/dev/null \
+              | grep -E "# ${UFW_MARK}[[:space:]]*\$" | head -1 \
+              | tr -d '[]' | awk '{print $1}')"
+        [[ "$nr" =~ ^[0-9]+$ ]] || break
+        ufw --force delete "$nr" >/dev/null 2>&1 || break
+    done
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --language|--lang) LANGUAGE="${2:-}"; shift 2 ;;
@@ -144,7 +170,10 @@ if [[ "$ACTION" == "remove" ]]; then
     rm -f /etc/nginx/sites-enabled/node-dashboard /etc/nginx/sites-available/node-dashboard
     systemctl reload nginx >/dev/null 2>&1 || true
     userdel "$DASH_USER" >/dev/null 2>&1 || true
-    ok "service, program, web page and user removed"
+    # The firewall rule went with nothing until 2026-09-06: the port stayed
+    # open for a page that was no longer there.
+    command -v ufw >/dev/null && ufw_delete_marked
+    ok "service, program, web page, user and firewall rule removed"
     yellow "  Left alone: $CONF and the lines in your bitcoin.conf."
     yellow "  Clean up bitcoin.conf by hand if you no longer want the account:"
     echo "    rpcauth=${RPC_USER}:..."
@@ -515,12 +544,8 @@ elif [[ -z "$SUBNET" ]]; then
     warn "network range not detected — the firewall is left alone."
     info "sudo bash install.sh --subnet 192.168.1.0/24   (your range) sets the rule"
 else
-    while ufw status numbered 2>/dev/null | grep -q "${PORT}/tcp"; do
-        NR="$(ufw status numbered | grep "${PORT}/tcp" | head -1 | tr -d '[]' | awk '{print $1}')"
-        [[ -n "$NR" ]] || break
-        yes | ufw delete "$NR" >/dev/null 2>&1 || break
-    done
-    ufw allow from "$SUBNET" to any port "$PORT" proto tcp comment 'node dashboard LAN' >/dev/null
+    ufw_delete_marked
+    ufw allow from "$SUBNET" to any port "$PORT" proto tcp comment "$UFW_MARK" >/dev/null
     ok "port $PORT reachable from $SUBNET only"
     info "The page is not reachable from the internet, not even with an open router."
 fi

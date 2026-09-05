@@ -312,6 +312,15 @@ exactly as a missing whitelist entry would.
 The generated page then sits in `tests/ausgabe/index.html` and can be opened
 in a browser.
 
+```bash
+bash tests/install-test.sh                  # the firewall part of install.sh
+```
+
+runs `install.sh`'s firewall function against a stand-in `ufw` on `$PATH` —
+no root, no real firewall. It exists because nothing in `probelauf.py`
+executes a line of the installer, and the first bug found there deleted
+rules (2026-09-06).
+
 About 220 checks run in the process, in both languages: well-formedness of the
 HTML, no buttons that reach the node, no inline styles, the correct decimal
 separator, escaping of foreign values, the tolerance window in both
