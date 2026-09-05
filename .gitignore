@@ -4,3 +4,4 @@ tests/ausgabe/
 tests/probe.conf
 tests/updates-probe.json
 tests/tor-probe.json
+tests/node_modules/

@@ -321,6 +321,17 @@ no root, no real firewall. It exists because nothing in `probelauf.py`
 executes a line of the installer, and the first bug found there deleted
 rules (2026-09-06).
 
+```bash
+cd tests && npm install --no-save jsdom && cd ..
+node tests/dash-test.js                     # dash.js against the generated page
+```
+
+runs the browser script under jsdom against the page, `status.json`,
+`log.txt` and `chronik.json` the generator has just written — the detail
+box, the peer map, the copy buttons, the log colouring, a failed fetch,
+and the chronicle's typing loop with a frozen clock. `probelauf.py` runs
+it by itself when `node` and jsdom are there and says so when they are not.
+
 About 220 checks run in the process, in both languages: well-formedness of the
 HTML, no buttons that reach the node, no inline styles, the correct decimal
 separator, escaping of foreign values, the tolerance window in both

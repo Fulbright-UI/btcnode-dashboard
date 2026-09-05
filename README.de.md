@@ -328,6 +328,18 @@ führt die Firewall-Funktion aus `install.sh` gegen eine `ufw`-Attrappe im
 `probelauf.py` eine Zeile des Installers ausführt, und der erste dort
 gefundene Fehler Regeln löschte (06.09.2026).
 
+```bash
+cd tests && npm install --no-save jsdom && cd ..
+node tests/dash-test.js                     # dash.js gegen die erzeugte Seite
+```
+
+führt das Browser-Skript unter jsdom gegen die Seite, `status.json`,
+`log.txt` und `chronik.json` aus, die der Generator gerade geschrieben
+hat — Detailkasten, Netzkarte, Kopierknöpfe, Protokollfarben, ein
+fehlgeschlagener Abruf und die Tippschleife der Chronik mit angehaltener
+Uhr. `probelauf.py` ruft ihn von selbst auf, wenn `node` und jsdom da
+sind, und sagt es, wenn nicht.
+
 Rund 220 Prüfungen laufen dabei durch, in beiden Sprachen: Wohlgeformtheit des
 HTML, keine Schaltflächen, die den Node erreichen, keine Inline-Stile, der
 richtige Dezimaltrenner, Maskierung fremder Werte, das Toleranzfenster in beide

@@ -1397,6 +1397,34 @@ def check_hashrate(nd, cfg):
           " | ".join(str(p) for p in windows[:3]))
 
 
+def check_dash_js():
+    """Run dash.js against the page just written, under jsdom (tests/dash-test.js).
+    The script is the one language in the repo nothing executed until
+    2026-09-06; three of the visible bugs of that week lived there. Needs
+    node and jsdom — without them the step says so and is skipped, it does
+    not fail: the Pi has neither, and the generator's checks stand alone."""
+    print("\n  dash.js")
+    node = shutil.which("node")
+    if not node:
+        print("  [ -- ] node not installed, dash.js not exercised")
+        return
+    # Popen, not subprocess.run: the mock replaced nd.subprocess.run, and
+    # that is this module's subprocess too. The first version of this
+    # check got an empty answer with return code 0 from the mock and
+    # reported "passes" without node ever running — the exact shape of
+    # the three issues that led here, inside their fix (2026-09-06).
+    with subprocess.Popen([node, str(HERE / "dash-test.js")],
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          text=True) as proc:
+        out = proc.communicate(timeout=180)[0].rstrip()
+        rc = proc.returncode
+    print("\n".join(l for l in out.splitlines() if l.strip() and "dash.js under jsdom" not in l))
+    check(out != "", "dash-test.js produced output (it really ran)")
+    if "skipped" in out and rc == 0:
+        return
+    check(rc == 0, "dash-test.js passes", "see above")
+
+
 def check_own_node(nd):
     """Pointing at the hub shows this node as its peers see it: a hoverable
     group in the SVG and an 'eigen' record in status.json."""
@@ -1752,6 +1780,7 @@ def main():
             check_fee_tile(nd)
             check_hashrate(nd, cfg)
             check_own_node(nd)
+            check_dash_js()
             check_cache(nd, cfg)
     finally:
         mock.terminate()

@@ -54,8 +54,12 @@ def blockstats(height):
         "total_out": int((900 + 700 * math.sin(i / 9)
                           + SPREAD.uniform(-150, 150)) * 1e8),
         "txs": int(2600 + 900 * math.sin(i / 7)),
+        # Integers, like Core: getblockstats reports the percentiles in
+        # whole sat/vB. Until 2026-09-06 the mock handed out 2.5…6.5 with a
+        # decimal — a distribution the real node cannot produce, and the
+        # fee cards were only ever tested against it.
         "feerate_percentiles": [1, 2,
-                                round(2.5 + 4 * abs(math.sin(i / 11)), 1), 9, 20],
+                                int(2.5 + 4 * abs(math.sin(i / 11))), 9, 20],
         # Core reports this as an integer in sat/vB; near the tip it is
         # usually 1, sometimes 2 or 3.
         "minfeerate": 1 + (i % 3 == 0),
