@@ -1,5 +1,3 @@
-# Everything is text with LF line endings, on every platform. The script
-# runs on Linux; a CRLF copy from a Windows checkout would break the
-# shebang line and every heredoc in install.sh.
-* text=auto eol=lf
-*.png binary
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
