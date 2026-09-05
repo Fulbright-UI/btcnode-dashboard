@@ -162,16 +162,32 @@ def replace_system_parts(nd, case):
     log = "\n".join(lines) + "\n" + log
 
     def run(command, *a, **k):
+        line = " ".join(map(str, command))
         # vcgencmd fails inside the service: PrivateDevices=true hides
         # /dev/vchiq. The mock fails the same way, so the page can only
         # show the power supply if the sysfs route works.
-        if "vcgencmd" in " ".join(map(str, command)):
+        if "vcgencmd" in line:
             raise OSError("no /dev/vchiq in the sandbox")
+
+        # Anything else is loud. `nd.subprocess` IS the subprocess module —
+        # modules are singletons — so this assignment rebinds
+        # subprocess.run for this file too. Until 2026-09-06 the stub
+        # answered every command with an empty, successful result, and so
+        # it also answered `node --check dash.js`: that check reported
+        # "syntactically valid" for a dash.js that node refuses to parse,
+        # from the day it was written, and its "node not available"
+        # fallback could never fire because the stub does not raise.
+        # Reported from outside. A stub that guesses is a stub that
+        # certifies; this one knows two commands and shouts at the third.
+        if "journalctl" not in line:
+            raise AssertionError(
+                "the journalctl stub was asked to answer an unrelated "
+                f"command — run it outside the stub (Popen): {line}")
 
         class Result:
             returncode = 0
             stderr = ""
-            stdout = log if "journalctl" in " ".join(map(str, command)) else ""
+            stdout = log
         return Result()
 
     nd.subprocess.run = run
@@ -1079,15 +1095,25 @@ def check_status(case):
         check((OUTPUT / name).exists(), f"{name} was written")
 
     # A typo in dash.js would silently switch off the entire moving layer —
-    # the page would look right and merely never get newer. No other test
-    # here would find that. If node is available, we check it.
-    try:
-        r = subprocess.run(["node", "--check", str(OUTPUT / "dash.js")],
-                           capture_output=True, text=True, timeout=20)
-        check(r.returncode == 0, "dash.js is syntactically valid",
-              (r.stderr or "").strip().split("\n")[0])
-    except (OSError, subprocess.SubprocessError):
+    # the page would look right and merely never get newer.
+    #
+    # Popen, not subprocess.run: the journalctl stub above has replaced
+    # subprocess.run for this whole process, and it used to answer this
+    # call with returncode 0. From the day it was written until
+    # 2026-09-06 this check was green for every dash.js, valid or not
+    # (shown from outside by breaking the script on purpose). Popen is
+    # untouched by the stub, and the empty output is asserted as well.
+    node = shutil.which("node")
+    if not node:
         print("  [ --  ] dash.js not checked (node not available)")
+    else:
+        with subprocess.Popen([node, "--check", str(OUTPUT / "dash.js")],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True) as proc:
+            out = proc.communicate(timeout=20)[0]
+            rc = proc.returncode
+        check(rc == 0, "dash.js is syntactically valid",
+              (out or "").strip().split("\n")[0])
 
     # Every field dash.js reads must exist in status.json.
     #
