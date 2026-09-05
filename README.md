@@ -35,8 +35,9 @@ it later in one line of the configuration file.
   colour
 - **Chain check**: every few minutes Bitcoin Core asks a random node for its
   height — its defence against being fed a false chain. The last hour of
-  those probes is shown as a row of dots; a node that reports more blocks
-  than you have raises a notice at the top of the page
+  those probes is shown as a row of dots. A single stranger claiming more
+  blocks is a red dot and a calm sentence (such claims are unproven);
+  two recent ones raise a notice at the top of the page
 - **A timeline in the header**, typed like someone typing into a
   terminal, one entry per data cycle and in date order: from the Bank of
   England, Jekyll Island and the Federal Reserve Act through Bretton
@@ -52,19 +53,20 @@ it later in one line of the configuration file.
 - **Days to the halving**, with the date and the blocks still to go
 - **Chain, mempool and Electrum** in one card: difficulty, next
   adjustment, mempool memory, fees waiting and fill level in the left
-  column; in the right one your Electrum server, if one runs, with a bar
-  showing how far its index has got; underneath the addresses for your
-  wallet with a copy button
+  column; in the right one your Electrum server — found by its port, so
+  electrs, Fulcrum and ElectrumX all count — with a bar showing how far
+  its index has got, and underneath the addresses for your wallet with a
+  copy button. Without a server the column stays and says so, and why
+  it matters
 - **Volume and fee history** of the last 24 hours, one bar per block, in
   three steps — grey, green, block orange — fees by sat/vB, volume
   against the day's mean; the label names the peak, every bar on the
   page tells its value when pointed at
 - **Hashrate since 2009** as a curve behind the state bar, linear, with
   the change against a year ago
-- **Log** of the node, live — accepted blocks in orange, their
-  announcements muted, chain-check probes green, errors and warnings red
-  and yellow. The lines stay plain text; only the colour comes from a
-  pattern table
+- **Log** of the node, live — accepted blocks tinted orange, errors and
+  warnings red and yellow, everything else plain. The lines stay plain
+  text; only the colour comes from a pattern table
 
 Without data the cards are still there — with a muted skeleton and dashes
 instead of numbers. **Never invented values:** on a display that reports the
@@ -78,8 +80,11 @@ and what was drawn.
 - A **running Bitcoin Core**, version 26 or newer. How it was set up does not
   matter
 - **Python 3.9** or newer (present on Raspberry Pi OS and Debian anyway)
-- **nginx**, or any other web server for static files
+- **nginx**, or any other web server for static files — the installer
+  offers to install nginx if it is missing
 - Write access to `bitcoin.conf`
+- An **Electrum server** is optional. The page shows the gap if there is
+  none — see [Electrum server](#electrum-server) below
 
 Tested on Raspberry Pi OS Lite 64-bit (Debian 13) with Bitcoin Core 31.1.
 
@@ -93,28 +98,21 @@ cd btcnode-dashboard
 sudo bash install.sh
 ```
 
-The script asks **one question** — the language of the page — and then runs
-through without further prompts: it finds the data directory itself, creates a
-**read-only** RPC account, sets the generator up as a service and limits the
-firewall to your local network.
+The script asks **three questions at most** — the language of the page,
+whether to install nginx if it is missing, and whether to restart bitcoind at
+the end — and does everything else by itself: it finds the data directory,
+creates a **read-only** RPC account, sets the generator up as a service,
+serves the page and limits the firewall to your local network. It ends with
+the address to type into a browser, and it checks that the page answers.
 
-Piped into a shell, where nobody could answer, it assumes English. To skip the
-question entirely:
+Every question has a default (shown in capitals); Enter takes it. Piped into
+a shell, or with `--yes`, the defaults apply throughout.
 
-```bash
-sudo bash install.sh --language de
-```
-
-One step it deliberately does not take by itself — **restarting bitcoind**.
-Without a restart the node does not know about the new account, and until then
-the dashboard shows "node not reachable". A restart during an initial sync
-costs the warm cache, and that is the operator's decision:
-
-```bash
-sudo systemctl restart bitcoind
-```
-
-Add `--restart` if you want that done for you.
+The restart is the one step it does not take on its own: bitcoind learns
+about the new account only after a restart, and a restart during an initial
+sync costs the warm cache. The script asks the node how far it is and
+proposes accordingly — "yes" when the chain is up to date, "no" while it is
+still syncing.
 
 When detection fails:
 
@@ -128,37 +126,40 @@ sudo bash install.sh --datadir /mnt/bitcoin/bitcoin --subnet 192.168.1.0/24
 | `--datadir PATH` | data directory of Bitcoin Core |
 | `--port N` | port of the status page, default 80 |
 | `--subnet CIDR` | local network for the firewall, e.g. `192.168.1.0/24` |
-| `--restart` | restart bitcoind at the end |
+| `--electrum-port N` | port of your Electrum server, default 50001 |
+| `--restart` | restart bitcoind at the end, without asking |
+| `--yes` | answer every question with its default |
 | `--uninstall` | remove service, program, page and user again |
 
 Everything is repeatable: running it twice breaks nothing, and an existing RPC
 password stays unchanged.
 
-### With prebuilt kits
+---
 
-Umbrel, Start9 and MyNode manage `bitcoin.conf` themselves and overwrite it on
-restart. There these lines belong at the place the kit provides for your own
-additions:
+## Electrum server
 
-```
-rpcauth=dashboard:<salt>$<digest>
-rpcwhitelist=dashboard:getblockchaininfo,getnetworkinfo,getmempoolinfo,getconnectioncount,uptime,estimatesmartfee,getblockstats,getblockhash,getblockheader,getpeerinfo,getnetworkhashps
-rpcwhitelistdefault=0
-```
+A wallet does not talk to Bitcoin Core directly; it talks to an Electrum
+server, which indexes the chain by address. Without one of your own, the
+wallet asks somebody else's server — and that server learns which addresses
+belong to you. For most people that is the reason to run a node at all.
 
-Generate the `rpcauth` line like this — then put the password into
-`/etc/node-dashboard.conf`:
+The dashboard does not install one; that is a build of its own (electrs is
+the usual choice on a Pi — from source, dynamically against the system
+RocksDB, then hours of indexing). What the dashboard does:
 
-```bash
-python3 - <<'PY'
-import hashlib, hmac, os, secrets
-password = secrets.token_urlsafe(32)
-salt = os.urandom(16).hex()
-digest = hmac.new(salt.encode(), password.encode(), hashlib.sha256).hexdigest()
-print(f"rpcauth=dashboard:{salt}${digest}")
-print(f"Password: {password}")
-PY
-```
+- it looks for a server on the Electrum port (`50001` by default,
+  `--electrum-port` or `ELECTRS_PORT` for another) — electrs, Fulcrum and
+  ElectrumX all answer there;
+- it shows whether the server runs and answers, how far its index has got,
+  and the two addresses to enter in the wallet — local network and, if a
+  Tor hidden service exists for it, the onion address — with a copy button;
+- without a server, the column says so and why it matters, in one muted
+  sentence. No alarm: the node itself is fine.
+
+The index figure comes from electrs' own metrics endpoint while it is still
+indexing, and from the Electrum protocol (`blockchain.headers.subscribe`)
+once it serves — the same question every wallet asks first. Nothing here
+leaves the machine.
 
 ---
 
@@ -245,10 +246,10 @@ Generated files:
 | File | Interval | Content |
 |---|---|---|
 | `index.html` | 30 s | the complete page |
-| `chronik.json` | once | the quotes for the header line |
 | `status.json` | 30 s | the same building blocks plus peers as pure structure |
 | `log.txt` | 5 s | journal lines, plain text, without any markup |
-| `stil.css`, `dash.js` | once | change only when the program is replaced |
+| `chronik.json` | once | the timeline for the header, with the generator's start time |
+| `stil.css`, `dash.js`, `bitcoin.png` | once | change only when the program is replaced |
 
 `dash.js` carries the labels of the configured language and is therefore
 written per installation. Its fingerprint is built over the finished text, so
@@ -271,7 +272,7 @@ In `/etc/node-dashboard.conf`, then `sudo systemctl restart node-dashboard`:
 | `RPC_TIMEOUT` | 45 | timeout per call, in seconds |
 | `TOLERANCE` | 3 | unsuccessful calls before the alarm is raised |
 | `PEERS_MAX` | 64 | maximum number of dots in the network map |
-| `ELECTRS_PORT` | 50001 | port of the Electrum server, if one runs |
+| `ELECTRS_PORT` | 50001 | port of the Electrum server; the page looks there |
 | `ELECTRS_METRICS` | 127.0.0.1:4224 | Prometheus endpoint of electrs, read for the index bar while it is not serving yet |
 
 The language affects more than words: German writes `1.234.567,8`, English
@@ -311,15 +312,17 @@ exactly as a missing whitelist entry would.
 The generated page then sits in `tests/ausgabe/index.html` and can be opened
 in a browser.
 
-About 170 checks run in the process, in both languages: well-formedness of the
+About 220 checks run in the process, in both languages: well-formedness of the
 HTML, no buttons that reach the node, no inline styles, the correct decimal
 separator, escaping of foreign values, the tolerance window in both
 directions, the geometry of the network map, the path of the last block and
 the chain check — and several that came out of real breakage: every visible
 string must have a translation, every CSS class used in the markup must exist
 in the style sheet, every field the browser script reads must exist in
-`status.json`, and the power supply row must appear even though the mock,
-like the sandboxed service, cannot call `vcgencmd`.
+`status.json` and every `data-` attribute it reads must be on the page,
+the meta refresh must sit inside `<noscript>`, and the power supply row must
+appear even though the mock, like the sandboxed service, cannot call
+`vcgencmd`.
 
 ---
 

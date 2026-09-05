@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "3.5"
+VERSION = "3.5.1"
 
 # ================================================================= Language ==
 # English is the source language: the code carries the English text, the table
@@ -184,6 +184,16 @@ DE = {
     "Responding": "Antwortet",
     "yes": "ja",
     "no, still indexing": "nein, indiziert noch",
+    "none set up": "keiner eingerichtet",
+    "Wallet": "Wallet",
+    "asks foreign servers": "fragt fremde Server",
+    "ready": "bereit",
+    "No Electrum server found on port {port}. Without one your "
+    "wallet asks foreign servers, and those learn which addresses "
+    "belong to you. electrs is the usual choice; the README says how.":
+        "Kein Electrum-Server auf Port {port} gefunden. Ohne ihn fragt die "
+        "Wallet fremde Server, und die erfahren, welche Adressen dir gehören. "
+        "electrs ist der übliche Weg; das README sagt wie.",
     "complete": "vollständig",
     "{n} of {tip} bloecke": "{n} von {tip} Blöcken",
     "On the local network": "Im Heimnetz",
@@ -2857,25 +2867,39 @@ def collect_electrum(cfg, tip=None):
     Electrum. Without it the wallet asks foreign servers, and those learn
     which addresses belong to you.
     """
-    if not os.path.exists("/etc/systemd/system/electrs.service"):
-        return None
-
-    running = service_running("electrs")
     port = cfg["ELECTRS_PORT"]
-    reachable = port_open("127.0.0.1", port) if running else False
+    # Recognised by the unit OR by the port (2026-09-06, Jakob): Fulcrum,
+    # ElectrumX or an electrs under another unit name all answer on the
+    # Electrum port, and that is what the wallet cares about. The index
+    # figure stays electrs-only — it comes from electrs' own Prometheus
+    # endpoint.
+    has_unit = os.path.exists("/etc/systemd/system/electrs.service")
+    reachable = port_open("127.0.0.1", port)
+    running = service_running("electrs") if has_unit else reachable
 
-    # Since 2026-09-05 (Jakob) this is the third inner column of the
+    # Since 2026-09-05 (Jakob) this is the second inner column of the
     # 'Network & Electrum' card, not a card of its own: the "spalte" marker
-    # opens the column, the copy fields land under all three columns. Where
+    # opens the column, the copy fields land under both columns. Where
     # there is no network card (node unreachable), one_pass shows the
     # fields as a card of their own.
-    fields = [
-        ("Electrum", "", "spalte"),
-        (t("Service"), t("running") if running else t("stopped"),
-         "gut" if running else "warn"),
-        (t("Responding"), t("yes") if reachable else t("no, still indexing"),
-         "gut" if reachable else "warn"),
-    ]
+    fields = [("Electrum", "", "spalte")]
+
+    if not has_unit and not reachable:
+        # No server at all. The column stays and says what is missing and
+        # why it matters — it is the main reason to run a node of one's own
+        # (2026-09-06). Muted, not a warning: the node itself is fine.
+        fields.append((t("Service"), t("none set up"), "leer"))
+        fields.append((t("Wallet"), t("asks foreign servers"), "leer"))
+        note = t("No Electrum server found on port {port}. Without one your "
+                 "wallet asks foreign servers, and those learn which addresses "
+                 "belong to you. electrs is the usual choice; the README says how.",
+                 port=port)
+        return ("Electrum server", fields, note)
+
+    fields.append((t("Service"), t("running") if running else t("stopped"),
+                   "gut" if running else "warn"))
+    fields.append((t("Responding"), t("yes") if reachable else t("no, still indexing"),
+                   "gut" if reachable else "warn"))
 
     # How far the index has got, against the node's own height. Until the
     # bar is full the wallet cannot connect — this is the one thing to watch
@@ -2902,8 +2926,12 @@ def collect_electrum(cfg, tip=None):
                     else decimal_sep(f"{fraction * 100:.1f} %"))
             fields.append((t("Index"), rest, "warn"))
             fields.append(("", build_bar(fraction, "warn", title=heights), "grafik"))
-    elif running:
+    elif running and has_unit:
         fields.append((t("Index"), t("progress not readable"), "leer"))
+    elif running:
+        # A server we only know by its port and that gave no height: it
+        # answers, that is all we know.
+        fields.append((t("Index"), t("ready"), "gut"))
 
     # --- Connection details for the wallet, to click and copy ---------------
     ip = own_ip()

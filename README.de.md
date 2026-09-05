@@ -35,8 +35,10 @@ danach; ändern lässt es sich später mit einer Zeile in der Konfiguration.
   Gegenstelle über P2P andockt, bekommt eine eigene Farbe
 - **Kettenabgleich**: Bitcoin Core fragt alle paar Minuten einen zufälligen
   Knoten nach seiner Höhe — die Abwehr gegen eine untergeschobene Kette. Die
-  Stichproben der letzten Stunde stehen als Punktreihe im Kopf der Netzkarte;
-  meldet ein Knoten mehr Blöcke als du hast, erscheint oben eine Meldung
+  Stichproben der letzten Stunde stehen als Punktreihe im Kopf der Netzkarte.
+  Ein einzelner Fremder, der mehr Blöcke behauptet, ist ein roter Punkt und
+  ein ruhiger Satz (Behauptungen sind unbelegt); zwei jüngere zusammen
+  erzeugen oben eine Meldung
 - **Eine Zeitleiste in der Kopfzeile**, getippt wie in ein Terminal, ein
   Eintrag je Datenabruf und chronologisch: von der Bank of England, Jekyll
   Island und dem Federal Reserve Act über Bretton Woods, 1971 und die
@@ -53,19 +55,19 @@ danach; ändern lässt es sich später mit einer Zeile in der Konfiguration.
 - **Tage bis zur Halbierung**, mit Datum und den Blöcken, die noch fehlen
 - **Kette, Mempool und Electrum** in einer Karte: Schwierigkeit, nächste
   Anpassung, Mempool-Speicher, wartende Gebühren und Füllstand in der
-  linken Spalte; rechts der Electrum-Server, falls einer läuft, mit einem
-  Balken, wie weit sein Index ist; darunter die Adressen für die Wallet
-  mit Kopierknopf
+  linken Spalte; rechts der Electrum-Server — am Port erkannt, also zählen
+  electrs, Fulcrum und ElectrumX gleichermaßen — mit einem Balken, wie weit
+  sein Index ist, und darunter die Adressen für die Wallet mit Kopierknopf.
+  Ohne Server bleibt die Spalte stehen und sagt das, und warum es zählt
 - **Volumen und Gebührenverlauf** der letzten 24 Stunden, ein Balken je
   Block, in drei Stufen — Grau, Grün, Block-Orange — Gebühren nach sat/vB,
   Volumen gegen das Tagesmittel; die Beschriftung nennt die Spitze, jeder
   Balken der Seite zeigt beim Zeigen seinen Wert
 - **Hashrate seit 2009** als Kurve hinter dem Zustandsbalken, linear, mit
   der Veränderung zum Vorjahr
-- **Protokoll** des Nodes, mitlaufend — angenommene Blöcke orange, ihre
-  Ankündigungen gedämpft, Stichproben des Kettenabgleichs grün, Fehler und
-  Warnungen rot und gelb. Die Zeilen bleiben reiner Text; nur die Farbe
-  kommt aus einer Mustertabelle
+- **Protokoll** des Nodes, mitlaufend — angenommene Blöcke orange getönt,
+  Fehler und Warnungen rot und gelb, alles andere schlicht. Die Zeilen
+  bleiben reiner Text; nur die Farbe kommt aus einer Mustertabelle
 
 Ohne Daten stehen die Karten trotzdem da — mit einem gedämpften Gerüst und
 Strichen statt Zahlen. **Nie erfundene Werte:** Auf einer Anzeige, die den
@@ -79,8 +81,11 @@ mehr, was gemessen und was gemalt war.
 - Ein **laufender Bitcoin Core**, Version 26 oder neuer. Wie er aufgesetzt
   wurde, spielt keine Rolle
 - **Python 3.9** oder neuer (auf Raspberry Pi OS und Debian ohnehin dabei)
-- **nginx**, oder ein beliebiger anderer Webserver für statische Dateien
+- **nginx**, oder ein beliebiger anderer Webserver für statische Dateien —
+  fehlt nginx, bietet das Installationsskript an, es zu installieren
 - Schreibzugriff auf die `bitcoin.conf`
+- Ein **Electrum-Server** ist optional. Fehlt er, zeigt die Seite die Lücke —
+  siehe [Electrum-Server](#electrum-server) unten
 
 Getestet auf Raspberry Pi OS Lite 64-bit (Debian 13) mit Bitcoin Core 31.1.
 
@@ -94,29 +99,21 @@ cd btcnode-dashboard
 sudo bash install.sh
 ```
 
-Das Skript stellt **eine Frage** — die Sprache der Seite — und läuft danach
-ohne weitere Rückfragen durch: Es findet das Datenverzeichnis selbst, legt
-einen **nur lesenden** RPC-Zugang an, richtet den Generator als Dienst ein und
-begrenzt die Firewall auf das Heimnetz.
+Das Skript stellt **höchstens drei Fragen** — die Sprache der Seite, ob es
+nginx installieren soll, falls der fehlt, und ob es bitcoind am Ende neu
+startet — und macht alles andere selbst: Es findet das Datenverzeichnis, legt
+einen **nur lesenden** RPC-Zugang an, richtet den Generator als Dienst ein,
+liefert die Seite aus und begrenzt die Firewall auf das Heimnetz. Am Ende
+steht die Adresse für den Browser, und es prüft, dass die Seite antwortet.
 
-In eine Pipe geleitet, wo niemand antworten könnte, nimmt es Englisch. Wer die
-Frage überspringen will:
+Jede Frage hat eine Vorgabe (groß geschrieben); Enter nimmt sie. In eine Pipe
+geleitet oder mit `--yes` gelten durchgehend die Vorgaben.
 
-```bash
-sudo bash install.sh --language de
-```
-
-Einen Schritt macht es bewusst nicht von selbst — **bitcoind neu starten**.
-Ohne Neustart kennt der Node den neuen Zugang nicht, und bis dahin zeigt das
-Dashboard „Node nicht erreichbar". Der Neustart kostet während einer laufenden
-Erstsynchronisation den warmen Zwischenspeicher, und das ist eine Entscheidung
-des Betreibers:
-
-```bash
-sudo systemctl restart bitcoind
-```
-
-Wer das gleich miterledigt haben will, hängt `--restart` an.
+Der Neustart ist der eine Schritt, den es nicht von selbst macht: bitcoind
+kennt den neuen Zugang erst nach einem Neustart, und ein Neustart während der
+Erstsynchronisation kostet den warmen Zwischenspeicher. Das Skript fragt den
+Node, wie weit er ist, und schlägt entsprechend vor — „ja", wenn die Kette
+steht, „nein", solange sie noch synchronisiert.
 
 Wenn die Erkennung scheitert:
 
@@ -130,37 +127,41 @@ sudo bash install.sh --datadir /mnt/bitcoin/bitcoin --subnet 192.168.1.0/24
 | `--datadir PFAD` | Datenverzeichnis von Bitcoin Core |
 | `--port N` | Port der Statusseite, Vorgabe 80 |
 | `--subnet CIDR` | Heimnetz für die Firewall, z. B. `192.168.1.0/24` |
-| `--restart` | bitcoind am Ende neu starten |
+| `--electrum-port N` | Port des Electrum-Servers, Vorgabe 50001 |
+| `--restart` | bitcoind am Ende neu starten, ohne Frage |
+| `--yes` | jede Frage mit ihrer Vorgabe beantworten |
 | `--uninstall` | Dienst, Programm, Seite und Nutzer wieder entfernen |
 
 Alles ist wiederholbar: Zweimal ausführen macht nichts kaputt, und ein
 bestehendes RPC-Passwort bleibt unverändert.
 
-### Bei fertigen Bausätzen
+---
 
-Umbrel, Start9 und MyNode verwalten die `bitcoin.conf` selbst und überschreiben
-sie beim Neustart. Dort gehören diese Zeilen an die vom Bausatz vorgesehene
-Stelle für eigene Ergänzungen:
+## Electrum-Server
 
-```
-rpcauth=dashboard:<salz>$<pruefsumme>
-rpcwhitelist=dashboard:getblockchaininfo,getnetworkinfo,getmempoolinfo,getconnectioncount,uptime,estimatesmartfee,getblockstats,getblockhash,getblockheader,getpeerinfo,getnetworkhashps
-rpcwhitelistdefault=0
-```
+Eine Wallet spricht nicht direkt mit Bitcoin Core, sondern mit einem
+Electrum-Server, der die Kette nach Adressen indiziert. Ohne einen eigenen
+fragt die Wallet den Server von jemand anderem — und der erfährt, welche
+Adressen dir gehören. Für die meisten ist genau das der Grund, überhaupt
+einen Node zu betreiben.
 
-Die `rpcauth`-Zeile erzeugst du so — das Passwort danach in
-`/etc/node-dashboard.conf` eintragen:
+Das Dashboard installiert keinen; das ist ein eigener Bau (auf dem Pi
+üblicherweise electrs — aus der Quelle, dynamisch gegen die RocksDB des
+Systems, danach Stunden Indexlauf). Was das Dashboard tut:
 
-```bash
-python3 - <<'PY'
-import hashlib, hmac, os, secrets
-passwort = secrets.token_urlsafe(32)
-salz = os.urandom(16).hex()
-pruef = hmac.new(salz.encode(), passwort.encode(), hashlib.sha256).hexdigest()
-print(f"rpcauth=dashboard:{salz}${pruef}")
-print(f"Passwort: {passwort}")
-PY
-```
+- es sucht am Electrum-Port nach einem Server (`50001` als Vorgabe,
+  `--electrum-port` oder `ELECTRS_PORT` für einen anderen) — electrs,
+  Fulcrum und ElectrumX antworten alle dort;
+- es zeigt, ob der Server läuft und antwortet, wie weit sein Index ist, und
+  die zwei Adressen für die Wallet — Heimnetz und, falls ein Tor-Dienst
+  dafür besteht, die Onion-Adresse — mit Kopierknopf;
+- ohne Server sagt die Spalte das und warum es zählt, in einem gedämpften
+  Satz. Kein Alarm: dem Node selbst fehlt nichts.
+
+Der Indexstand kommt aus dem eigenen Metrik-Endpunkt von electrs, solange
+es noch indiziert, und aus dem Electrum-Protokoll
+(`blockchain.headers.subscribe`), sobald es bedient — dieselbe Frage, die
+jede Wallet als Erstes stellt. Nichts davon verlässt den Rechner.
 
 ---
 
@@ -250,10 +251,10 @@ Erzeugt werden:
 | Datei | Takt | Inhalt |
 |---|---|---|
 | `index.html` | 30 s | vollständige Seite |
-| `chronik.json` | einmalig | die Zitate für die Kopfzeile |
 | `status.json` | 30 s | dieselben Bausteine plus Peers als reine Struktur |
 | `log.txt` | 5 s | Journalzeilen, reiner Text, ohne jedes Markup |
-| `stil.css`, `dash.js` | einmalig | ändern sich nur beim Programmtausch |
+| `chronik.json` | einmalig | die Zeitleiste für die Kopfzeile, mit der Startzeit des Generators |
+| `stil.css`, `dash.js`, `bitcoin.png` | einmalig | ändern sich nur beim Programmtausch |
 
 `dash.js` trägt die Beschriftungen der eingestellten Sprache und wird deshalb
 je Installation geschrieben. Sein Fingerabdruck wird über den fertigen Text
@@ -276,7 +277,7 @@ In `/etc/node-dashboard.conf`, danach `sudo systemctl restart node-dashboard`:
 | `RPC_TIMEOUT` | 45 | Zeitlimit je Abfrage in Sekunden |
 | `TOLERANCE` | 3 | erfolglose Abfragen, bevor Alarm geschlagen wird |
 | `PEERS_MAX` | 64 | Höchstzahl der Punkte in der Netzkarte |
-| `ELECTRS_PORT` | 50001 | Port des Electrum-Servers, falls einer läuft |
+| `ELECTRS_PORT` | 50001 | Port des Electrum-Servers; dort schaut die Seite nach |
 | `ELECTRS_METRICS` | 127.0.0.1:4224 | Prometheus-Anschluss von electrs; wird für den Index-Balken gelesen, solange er noch nicht bedient |
 
 Die Sprache betrifft mehr als Wörter: Deutsch schreibt `1.234.567,8`, Englisch
@@ -318,16 +319,17 @@ mit HTTP 403, so wie eine fehlende Whitelist-Eintragung es täte.
 Die erzeugte Seite liegt danach in `tests/ausgabe/index.html` und lässt sich im
 Browser öffnen.
 
-Rund 170 Prüfungen laufen dabei durch, in beiden Sprachen: Wohlgeformtheit des
+Rund 220 Prüfungen laufen dabei durch, in beiden Sprachen: Wohlgeformtheit des
 HTML, keine Schaltflächen, die den Node erreichen, keine Inline-Stile, der
 richtige Dezimaltrenner, Maskierung fremder Werte, das Toleranzfenster in beide
 Richtungen, die Geometrie der Netzkarte, der Weg des letzten Blocks und der
 Kettenabgleich — und mehrere, die aus echtem Schaden entstanden sind: Jeder
 sichtbare Text braucht eine Übersetzung, jede im Markup benutzte CSS-Klasse
 muss es in der Stilvorlage geben, jedes Feld, das das Browser-Skript liest,
-muss in `status.json` stehen, und die Zeile zur Stromversorgung muss
-erscheinen, obwohl die Attrappe — wie der abgeschottete Dienst — `vcgencmd`
-nicht aufrufen kann.
+muss in `status.json` stehen und jedes `data-`-Attribut, das es liest, auf
+der Seite, der Meta-Refresh muss in `<noscript>` sitzen, und die Zeile zur
+Stromversorgung muss erscheinen, obwohl die Attrappe — wie der abgeschottete
+Dienst — `vcgencmd` nicht aufrufen kann.
 
 ---
 

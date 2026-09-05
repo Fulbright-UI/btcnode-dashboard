@@ -3,7 +3,8 @@
 # install.sh — sets up the node dashboard on an existing Bitcoin node.
 #
 # Assumes a running bitcoind. How it was set up does not matter: by hand, from
-# a package, RaspiBolt, or with the scripts of any prebuilt kit.
+# a package or by hand. Prebuilt kits (Umbrel, Start9, MyNode) are not
+# covered: they manage bitcoin.conf themselves.
 #
 # It installs neither Bitcoin Core nor an Electrum server. That is deliberate:
 # a script that occupies 750 GB and builds from source for hours is a
@@ -26,8 +27,14 @@
 #   sudo bash install.sh --datadir /path/to/data  give the data directory
 #   sudo bash install.sh --port 8080              another port for the page
 #   sudo bash install.sh --subnet 192.168.1.0/24  give the local network
+#   sudo bash install.sh --electrum-port 50002   port of your Electrum server (default 50001)
 #   sudo bash install.sh --restart                restart bitcoind at the end
+#   sudo bash install.sh --yes                    answer every question with its default
 #   sudo bash install.sh --uninstall              remove everything again
+#
+# Questions (language, install nginx?, restart bitcoind?) are asked only
+# when a terminal is attached; piped into a shell, or with --yes, the
+# defaults apply. Every red line names the next command.
 #
 # Repeatable: running it twice breaks nothing.
 
@@ -42,18 +49,70 @@ CONF="/etc/node-dashboard.conf"
 RPC_USER="dashboard"
 ACTION="install"
 RESTART=0
+YES=0
+ELECTRUM_PORT=50001
 LANGUAGE=""
 
 # Read-only methods, all of them. Before adding anything here, check that the
 # method really changes nothing.
 METHODS="getblockchaininfo,getnetworkinfo,getmempoolinfo,getconnectioncount,uptime,estimatesmartfee,getblockstats,getblockhash,getblockheader,getpeerinfo,getnetworkhashps"
 
-red()   { printf '\033[31m%s\033[0m\n' "$*"; }
-yellow(){ printf '\033[33m%s\033[0m\n' "$*"; }
-title() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
-ok()    { printf '  [ ok ] %s\n' "$*"; }
+# Colour only when the output is a terminal; a log file gets plain text.
+if [[ -t 1 ]]; then
+    C_RED=$'\033[31m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_BOLD=$'\033[1m'; C_OFF=$'\033[0m'
+else
+    C_RED=""; C_GREEN=""; C_YELLOW=""; C_BOLD=""; C_OFF=""
+fi
+red()   { printf '  %s[FAIL]%s %s\n' "$C_RED" "$C_OFF" "$*"; }
+yellow(){ printf '  %s%s%s\n' "$C_YELLOW" "$*" "$C_OFF"; }
+title() { printf '\n%s== %s ==%s\n' "$C_BOLD" "$*" "$C_OFF"; }
+ok()    { printf '  %s[ ok ]%s %s\n' "$C_GREEN" "$C_OFF" "$*"; }
 info()  { printf '  ...... %s\n' "$*"; }
-warn()  { printf '  [ !! ] %s\n' "$*"; }
+warn()  { printf '  %s[ !! ]%s %s\n' "$C_YELLOW" "$C_OFF" "$*"; }
+# A failure names the next command, then stops. Nothing is left half done
+# that a second run would not repair.
+fail()  { red "$1"; shift; for L in "$@"; do printf '         %s\n' "$L"; done; exit 1; }
+
+# ask "question" default(y|n) -> returns 0 for yes. Without a terminal, or
+# with --yes, the default answers.
+ask() {
+    local question="$1" default="$2" answer
+    if [[ -t 0 && $YES -eq 0 ]]; then
+        if [[ "$default" == "y" ]]; then
+            printf '  %s [Y/n] ' "$question"
+        else
+            printf '  %s [y/N] ' "$question"
+        fi
+        read -r answer
+        answer="${answer,,}"
+        [[ -z "$answer" ]] && answer="$default"
+        [[ "$answer" == "y" || "$answer" == "yes" || "$answer" == "j" || "$answer" == "ja" ]]
+    else
+        [[ "$default" == "y" ]]
+    fi
+}
+
+# Install a Debian package after asking. The script itself installs nothing
+# behind anyone's back — but it does offer, because "nginx is missing, come
+# back later" is not a finished installation.
+need_package() {
+    local cmd="$1" pkg="$2" why="$3"
+    command -v "$cmd" >/dev/null && return 0
+    warn "$pkg is not installed — $why"
+    if ask "Install $pkg now with apt?" y; then
+        if ! command -v apt-get >/dev/null; then
+            fail "no apt-get on this system." "Install $pkg with your package manager and run this script again."
+        fi
+        info "apt-get install -y $pkg …"
+        if DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$pkg" >/tmp/install-"$pkg".log 2>&1; then
+            ok "$pkg installed"
+        else
+            fail "$pkg could not be installed. The last lines of apt:" "$(tail -n 5 /tmp/install-"$pkg".log)" "Then run this script again."
+        fi
+    else
+        return 1
+    fi
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -61,14 +120,16 @@ while [[ $# -gt 0 ]]; do
         --datadir)         DATADIR="${2:-}"; shift 2 ;;
         --port)            PORT="${2:-}"; shift 2 ;;
         --subnet)          SUBNET="${2:-}"; shift 2 ;;
+        --electrum-port)   ELECTRUM_PORT="${2:-}"; shift 2 ;;
         --restart)         RESTART=1; shift ;;
+        --yes|-y)          YES=1; shift ;;
         --uninstall)       ACTION="remove"; shift ;;
-        -h|--help)         sed -n '2,32p' "$0"; exit 0 ;;
-        *) red "Unknown option: $1"; exit 1 ;;
+        -h|--help)         sed -n '2,37p' "$0"; exit 0 ;;
+        *) fail "Unknown option: $1" "sudo bash install.sh --help  lists the options" ;;
     esac
 done
 
-[[ $EUID -eq 0 ]] || { red "Please run with sudo."; exit 1; }
+[[ $EUID -eq 0 ]] || fail "This script needs root." "sudo bash install.sh"
 
 SCRIPTDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -97,7 +158,7 @@ fi
 # English is assumed there. Everything else in this script runs without
 # questions.
 if [[ -z "$LANGUAGE" ]]; then
-    if [[ -t 0 ]]; then
+    if [[ -t 0 && $YES -eq 0 ]]; then
         printf '\n\033[1m== Language ==\033[0m\n'
         printf '  Language of the dashboard page — [E]nglish or [G]erman? [E] '
         read -r ANSWER
@@ -119,7 +180,8 @@ title "Preconditions"
 
 ok "page language: $LANGUAGE"
 
-command -v python3 >/dev/null || { red "python3 is missing. apt install python3"; exit 1; }
+need_package python3 python3 "the generator is a Python program" \
+    || fail "python3 is required." "sudo apt install python3   then run this script again"
 ok "python3 present ($(python3 -V 2>&1))"
 
 if ! systemctl is-active --quiet bitcoind && ! pgrep -x bitcoind >/dev/null; then
@@ -149,20 +211,21 @@ if [[ -z "$DATADIR" ]]; then
 fi
 
 if [[ -z "$DATADIR" || ! -d "$DATADIR" ]]; then
-    red "  Data directory not found."
-    echo "  Please give it:  sudo bash install.sh --datadir /path/to/datadir"
-    exit 1
+    fail "Data directory of Bitcoin Core not found." \
+         "Find it (usually where bitcoin.conf and the 'blocks' folder are) and give it:" \
+         "sudo bash install.sh --datadir /path/to/datadir"
 fi
 BITCOIN_CONF="${DATADIR}/bitcoin.conf"
-[[ -f "$BITCOIN_CONF" ]] || { red "  $BITCOIN_CONF is missing."; exit 1; }
+[[ -f "$BITCOIN_CONF" ]] || fail "$BITCOIN_CONF is missing." \
+    "Create it (an empty file is enough) and run this script again:" \
+    "sudo touch $BITCOIN_CONF"
 ok "data directory: $DATADIR"
 
 if [[ ! -w "$BITCOIN_CONF" ]]; then
-    red "  $BITCOIN_CONF is not writable."
-    echo "  Prebuilt kits (Umbrel, Start9, MyNode) manage it themselves and"
-    echo "  overwrite it on restart. There, add the lines from the README by"
-    echo "  hand at the place the kit provides for your own additions."
-    exit 1
+    fail "$BITCOIN_CONF is not writable." \
+         "This script needs to add a read-only RPC account there." \
+         "Prebuilt kits (Umbrel, Start9, MyNode) manage that file themselves" \
+         "and are not covered by this script."
 fi
 
 # --- local network ----------------------------------------------------------
@@ -179,8 +242,47 @@ else
 fi
 
 SOURCE="${SCRIPTDIR}/node-dashboard.py"
-[[ -f "$SOURCE" ]] || { red "node-dashboard.py is missing next to this script."; exit 1; }
+[[ -f "$SOURCE" ]] || fail "node-dashboard.py is missing next to this script." \
+    "Run the script from the cloned folder:" \
+    "cd btcnode-dashboard && sudo bash install.sh"
 ok "generator found"
+
+# --- Electrum server --------------------------------------------------------
+# Not installed here, but looked for: it is the main reason to run a node of
+# one's own — without it the wallet asks foreign servers. Recognised by the
+# port (electrs, Fulcrum, ElectrumX all answer there), the dashboard shows
+# what it finds and says so when nothing is there.
+port_listens() { python3 -c "import socket,sys; s=socket.socket(); s.settimeout(1); sys.exit(0 if s.connect_ex(('127.0.0.1', int(sys.argv[1])))==0 else 1)" "$1" 2>/dev/null; }
+if port_listens "$ELECTRUM_PORT"; then
+    ok "Electrum server answers on 127.0.0.1:${ELECTRUM_PORT}"
+elif [[ -f /etc/systemd/system/electrs.service ]]; then
+    ok "electrs is set up (not answering yet — still indexing, probably)"
+else
+    warn "no Electrum server found on port ${ELECTRUM_PORT}."
+    info "Without one your wallet asks foreign servers, and those learn which"
+    info "addresses belong to you. electrs is the usual choice; the README says how."
+    if [[ -t 0 && $YES -eq 0 ]]; then
+        printf '  Does one run on another port? Enter it, or Enter for none: '
+        read -r ANSWER
+        if [[ "$ANSWER" =~ ^[0-9]+$ ]]; then
+            ELECTRUM_PORT="$ANSWER"
+            if port_listens "$ELECTRUM_PORT"; then
+                ok "Electrum server answers on 127.0.0.1:${ELECTRUM_PORT}"
+            else
+                warn "nothing answers on ${ELECTRUM_PORT} right now — the port is kept, the dashboard will look there."
+            fi
+        fi
+    fi
+    info "The dashboard shows the gap on the page until a server answers there."
+fi
+
+# --- web server, decided up front so the run does not stop in the middle ----
+WEBSERVER="nginx"
+if ! need_package nginx nginx "it serves the page (static files, nothing else)"; then
+    WEBSERVER=""
+    warn "continuing without a web server — the page is written to $WWW,"
+    warn "serve that folder with any server that hands out static files."
+fi
 
 # ================================================================ RPC account =
 title "Read-only access to the node"
@@ -217,13 +319,13 @@ PY
     grep -q '^rpcwhitelistdefault=' "$BITCOIN_CONF" \
         || echo "rpcwhitelistdefault=0" >> "$BITCOIN_CONF"
 
-    ok "account '${RPC_USER}' added, limited to 10 read-only methods"
+    ok "account '${RPC_USER}' added, limited to $(tr ',' '\n' <<<"$METHODS" | wc -l) read-only methods"
     RESTART_NEEDED=1
 fi
 
 if [[ -z "${DASH_PASS:-}" ]]; then
-    red "  No password could be determined. Please check $CONF."
-    exit 1
+    fail "No password could be determined." \
+         "Remove $CONF and run this script again — a fresh account is created."
 fi
 
 # =================================================================== Install =
@@ -256,8 +358,9 @@ DATA_DIR=${DATADIR}
 # the browser — log lines come from the node and stay as they are.
 LANGUAGE=${LANGUAGE}
 
-# Port of the Electrum server, if one runs. Otherwise the card is omitted.
-ELECTRS_PORT=50001
+# Port of the Electrum server (electrs, Fulcrum, ElectrumX). The page shows
+# what answers there — and says so when nothing does.
+ELECTRS_PORT=${ELECTRUM_PORT}
 
 # Interval in seconds: querying the node and refreshing the log panel.
 INTERVAL=30
@@ -333,9 +436,9 @@ sleep 3
 if systemctl is-active --quiet node-dashboard; then
     ok "generator is running"
 else
-    red "  Generator does not start:"
-    journalctl -u node-dashboard -n 20 --no-pager | sed 's/^/    /'
-    exit 1
+    red "Generator does not start. The last lines of its log:"
+    journalctl -u node-dashboard -n 20 --no-pager | sed 's/^/         /'
+    fail "See above." "journalctl -u node-dashboard -n 50   shows more"
 fi
 
 # ================================================================ Web server =
@@ -345,11 +448,19 @@ title "Serving"
 # files: only that way does it work without 'unsafe-inline'.
 CSP="default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
-if command -v nginx >/dev/null; then
+if [[ -n "$WEBSERVER" ]] && command -v nginx >/dev/null; then
+    # The package ships a "Welcome to nginx" site on port 80. Two sites on
+    # one port without a name: nginx serves the first by file name, and
+    # "default" sorts before "node-dashboard" — the welcome page would win.
+    # Only the link in sites-enabled goes; the file stays in sites-available.
+    if [[ -e /etc/nginx/sites-enabled/default ]]; then
+        rm -f /etc/nginx/sites-enabled/default
+        info "nginx's welcome site disabled (sites-enabled/default)"
+    fi
     cat > /etc/nginx/sites-available/node-dashboard <<EOF
 server {
-    listen ${PORT};
-    listen [::]:${PORT};
+    listen ${PORT} default_server;
+    listen [::]:${PORT} default_server;
     root ${WWW};
     index index.html;
 
@@ -385,20 +496,25 @@ EOF
         systemctl reload nginx
         ok "nginx serves $WWW on port $PORT"
     else
-        red "  nginx configuration is faulty:"
-        nginx -t
-        exit 1
+        red "nginx rejects the configuration:"
+        nginx -t 2>&1 | sed 's/^/         /'
+        fail "See above." "Usually another site already listens on port ${PORT}:" \
+             "sudo bash install.sh --port 8080   moves the dashboard to another port"
     fi
 else
-    warn "nginx is not installed."
-    info "Either install it (apt install nginx) and run this script again, or"
-    info "serve $WWW with any web server you like. It only has to hand out"
-    info "static files — nothing else."
+    warn "no web server set up — $WWW must be served by hand."
 fi
 
 # ================================================================== Firewall =
-if command -v ufw >/dev/null && [[ -n "$SUBNET" ]]; then
-    title "Firewall"
+title "Firewall"
+if ! command -v ufw >/dev/null; then
+    warn "ufw is not installed — port $PORT is open to every device in the network."
+    info "That is fine at home. Never forward this port on your router: the"
+    info "page has no login. (sudo apt install ufw && sudo bash install.sh limits it)"
+elif [[ -z "$SUBNET" ]]; then
+    warn "network range not detected — the firewall is left alone."
+    info "sudo bash install.sh --subnet 192.168.1.0/24   (your range) sets the rule"
+else
     while ufw status numbered 2>/dev/null | grep -q "${PORT}/tcp"; do
         NR="$(ufw status numbered | grep "${PORT}/tcp" | head -1 | tr -d '[]' | awk '{print $1}')"
         [[ -n "$NR" ]] || break
@@ -412,28 +528,84 @@ fi
 # ===================================================================== Done ==
 title "Done"
 
+# The address people type into a browser. First choice: the interface the
+# default route uses; the fallback covers a Pi without a default route.
 IP="$(ip -4 -o route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')"
-echo "  In the browser:   http://${IP:-<ip-of-this-machine>}${PORT:+$([[ $PORT != 80 ]] && echo ":$PORT")}"
-echo
+[[ -n "$IP" ]] || IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+URL="http://${IP:-<ip-of-this-machine>}"
+[[ "$PORT" != "80" ]] && URL="${URL}:${PORT}"
+
+# How far the node is: a restart during the initial sync costs the warm
+# cache, so the default answer follows the state. Asked through the cookie,
+# which this script may read as root; no answer means "unknown".
+PROGRESS=""
+if command -v bitcoin-cli >/dev/null; then
+    PROGRESS="$(bitcoin-cli -datadir="$DATADIR" getblockchaininfo 2>/dev/null \
+                | sed -n 's/.*"verificationprogress": *\([0-9.]*\).*/\1/p')"
+fi
+SYNCED=""
+if [[ -n "$PROGRESS" ]]; then
+    SYNCED="$(python3 -c "print('yes' if float('$PROGRESS') >= 0.9999 else 'no')" 2>/dev/null)"
+    PERCENT="$(python3 -c "print(f'{float(\"$PROGRESS\") * 100:.1f}')" 2>/dev/null)"
+fi
 
 if (( RESTART_NEEDED == 1 )); then
+    yellow "bitcoind learns about the new account only after a restart."
+    yellow "Until then the dashboard shows 'node not reachable'."
+    DO_RESTART=0
     if (( RESTART == 1 )); then
-        systemctl restart bitcoind && ok "bitcoind restarted"
+        DO_RESTART=1
+    elif [[ "$SYNCED" == "yes" ]]; then
+        ok "the chain is up to date (${PERCENT} %) — a restart costs nothing"
+        ask "Restart bitcoind now?" y && DO_RESTART=1
+    elif [[ "$SYNCED" == "no" ]]; then
+        warn "the node is still syncing (${PERCENT} %) — a restart costs the warm"
+        warn "cache, depending on dbcache a few minutes of progress."
+        ask "Restart bitcoind now anyway?" n && DO_RESTART=1
     else
-        # Deliberately not on its own: a restart during the initial sync costs
-        # the warm cache, and that is the operator's decision, not this
-        # script's.
-        yellow "  One step is left: bitcoind learns about the new account only"
-        yellow "  after a restart. Until then the dashboard shows"
-        yellow "  'node not reachable'."
-        echo
-        echo "      sudo systemctl restart bitcoind"
-        echo
-        warn "During the initial sync this costs the warm cache — depending"
-        warn "on dbcache, a few minutes of progress."
+        warn "could not ask the node how far it is."
+        ask "Restart bitcoind now?" n && DO_RESTART=1
+    fi
+    if (( DO_RESTART == 1 )); then
+        if systemctl restart bitcoind 2>/dev/null; then
+            ok "bitcoind restarted"
+        else
+            warn "systemctl could not restart bitcoind (no unit of that name?)."
+            info "Restart it the way you started it — the account is in bitcoin.conf."
+        fi
+    else
+        info "Later:  sudo systemctl restart bitcoind"
     fi
 fi
 
+# --- final check: is the page there, does the node answer? ----------------
+# Up to a minute, because bitcoind takes a moment to come back after a
+# restart and the generator asks it every 30 s.
+if [[ -n "$WEBSERVER" ]]; then
+    PAGE_OK=0; NODE_OK=0
+    for _ in $(seq 1 20); do
+        # python3 rather than curl: curl is not on every minimal image,
+        # python3 is (the generator needs it).
+        BODY="$(python3 -c "import urllib.request,sys; print(urllib.request.urlopen(sys.argv[1], timeout=3).read().decode('utf-8','replace'))" "http://127.0.0.1:${PORT}/" 2>/dev/null || true)"
+        if [[ "$BODY" == *"<title>"* ]]; then
+            PAGE_OK=1
+            # The state bar carries data-stufe: 'fehler' while the node is
+            # not reachable, anything else once it answers.
+            if [[ "$BODY" != *'data-stufe="fehler"'* ]]; then NODE_OK=1; break; fi
+        fi
+        sleep 3
+    done
+    if (( PAGE_OK == 1 && NODE_OK == 1 )); then
+        ok "page answers and the node is reachable"
+    elif (( PAGE_OK == 1 )); then
+        warn "page answers, but the node does not yet — usually the restart is still due."
+    else
+        warn "page not reachable on 127.0.0.1:${PORT} — check: systemctl status nginx"
+    fi
+fi
+
+echo
+printf '  %sIn the browser:   %s%s\n' "$C_BOLD" "$URL" "$C_OFF"
 echo
 echo "  Commands:"
 echo "    systemctl status node-dashboard              the generator"

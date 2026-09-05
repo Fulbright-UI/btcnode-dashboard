@@ -1276,6 +1276,37 @@ def check_power_supply(page):
           "the power supply row is on the page, read from the rpi_volt hwmon")
 
 
+def check_no_electrum(nd, cfg):
+    """Without any Electrum server the column stays and says what is
+    missing and why (2026-09-06); with a server known only by its port
+    (Fulcrum, ElectrumX) it is shown as ready."""
+    print("\n  Without an Electrum server")
+    real_exists, real_port = nd.os.path.exists, nd.port_open
+    try:
+        nd.os.path.exists = lambda p: False if "electrs.service" in p else real_exists(p)
+        nd.port_open = lambda host, port: False
+        card = nd.collect_electrum(cfg, 915312)
+        text = " ".join(str(f[1]) for f in card[1])
+        check(card is not None and nd.t("none set up") in text,
+              "the column says no server is set up", text)
+        check(nd.t("asks foreign servers") in text, "and what that means for the wallet")
+        check("kopier" not in " ".join(f[2] for f in card[1]), "no addresses to copy without a server")
+        check("50001" in card[2], "the note names the port", card[2][:80])
+        # A server known by its port alone, and one that answers no height
+        # (headers.subscribe would give one for any Electrum server).
+        nd.port_open = lambda host, port: True
+        real_height = nd.electrs_indexed_height
+        nd.electrs_indexed_height = lambda cfg: None
+        card = nd.collect_electrum(cfg, 915312)
+        text = " ".join(str(f[1]) for f in card[1])
+        check(nd.t("ready") in text and nd.t("running") in text,
+              "a server known by its port alone counts as running and ready", text)
+        check(any(f[2] == "kopier" for f in card[1]), "with the addresses to copy")
+        nd.electrs_indexed_height = real_height
+    finally:
+        nd.os.path.exists, nd.port_open = real_exists, real_port
+
+
 def check_electrum_index(page, case):
     """The index bar of the Electrum card, against the mocked height."""
     print("\n  Electrum index")
@@ -1671,6 +1702,7 @@ def main():
         check_translation(nd)
         check_script_strings(nd)
         check_electrum_index(page, args.case)
+        check_no_electrum(nd, cfg)
         check_power_supply(page)
         check_log_colours(page, nd)
         check_classes(page, nd, args.case)
