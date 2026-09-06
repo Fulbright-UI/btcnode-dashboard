@@ -77,8 +77,14 @@ and what was drawn.
 
 ## Requirements
 
-- A **running Bitcoin Core**, version 26 or newer. How it was set up does not
-  matter
+- A **running Bitcoin Core**, version 26 or newer, for everything the RPC
+  interface provides. How it was set up does not matter.
+  Two cards read the node's log instead, and there the wording differs by
+  release: the **block announcer and the 24-hour ranking need Core 30 or
+  newer** (earlier versions do not log the height of an announcement), and
+  the **chain check needs Core 31.x** (Core's master branch has dropped the
+  peer's height from the connection line). Where the log cannot answer, the
+  card says so rather than staying blank
 - **Python 3.9** or newer (present on Raspberry Pi OS and Debian anyway)
 - **nginx**, or any other web server for static files — the installer
   offers to install nginx if it is missing
@@ -172,12 +178,19 @@ page back to the node. The generator writes files, the web server reads them.
 Nothing else happens.
 
 **The RPC account may only read.** `bitcoin.conf` carries
-`rpcwhitelistdefault=0` and an explicit list of eleven methods. Even if the
+`rpcwhitelistdefault=0` and an explicit list of nine methods. Even if the
 password leaked, nothing could be done with it: no wallet, no sending, no
 configuration, no shutdown. Other RPC users are unaffected.
 
 **The service runs as its own system user** without login rights, confined by
 systemd (`ProtectSystem=strict`), with exactly one writable path.
+
+**The page has no login, and it publishes more than it looks like.** Anyone
+who can reach port 80 reads the node's own onion address (and electrs's), the
+address, user agent and traffic of every connected peer, and the node's
+journal in full — with `logips=1` in `bitcoin.conf` that includes every peer
+address bitcoind logs. Treat everything on the LAN that can reach this port
+as able to read all of it, and never forward the port on your router.
 
 **Foreign text never becomes markup.** Log lines, peer addresses and
 identifiers of other nodes are chosen by the peer, not by this program. They
@@ -264,9 +277,9 @@ In `/etc/node-dashboard.conf`, then `sudo systemctl restart node-dashboard`:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `LANGUAGE` | `en` | page language: `de` or `en` |
-| `INTERVAL` | 30 | interval of the node query, in seconds |
-| `LOG_INTERVAL` | 5 | interval of the log panel |
+| `LANGUAGE` | `de` | page language: `de` or `en`. install.sh asks and writes it |
+| `INTERVAL` | 21 | interval of the node query, in seconds. install.sh writes 30 |
+| `LOG_INTERVAL` | 3 | interval of the log panel. install.sh writes 5 |
 | `LOG_SERVICES` | `bitcoind` | sources, comma separated. Empty switches it off |
 | `LOG_LINES` | 150 | scrollback in the log. It fills the column and scrolls inside |
 | `RPC_TIMEOUT` | 45 | timeout per call, in seconds |

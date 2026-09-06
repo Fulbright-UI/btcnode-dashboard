@@ -78,7 +78,14 @@ mehr, was gemessen und was gemalt war.
 
 ## Voraussetzungen
 
-- Ein **laufender Bitcoin Core**, Version 26 oder neuer. Wie er aufgesetzt
+- Ein **laufender Bitcoin Core**, Version 26 oder neuer, für alles, was über
+  die RPC-Schnittstelle kommt. Zwei Karten lesen stattdessen das Protokoll des
+  Nodes, und dort ändert sich der Wortlaut mit jeder Fassung: **Ankündiger und
+  24-Stunden-Rangliste brauchen Core 30 oder neuer** (frühere Fassungen
+  protokollieren die Höhe einer Ankündigung nicht), der **Kettenabgleich
+  braucht Core 31.x** (Cores master-Zweig hat die Höhe der Gegenstelle aus der
+  Verbindungszeile entfernt). Wo das Protokoll nichts hergibt, sagt die Karte
+  das, statt leer zu bleiben. Wie er aufgesetzt
   wurde, spielt keine Rolle
 - **Python 3.9** oder neuer (auf Raspberry Pi OS und Debian ohnehin dabei)
 - **nginx**, oder ein beliebiger anderer Webserver für statische Dateien —
@@ -174,10 +181,17 @@ zurück zum Node. Der Generator schreibt Dateien, der Webserver liest sie. Mehr
 passiert nicht.
 
 **Der RPC-Zugang darf nur lesen.** In der `bitcoin.conf` steht
-`rpcwhitelistdefault=0` und eine ausdrückliche Liste von zehn Methoden. Selbst
+`rpcwhitelistdefault=0` und eine ausdrückliche Liste von neun Methoden. Selbst
 wenn das Passwort abhanden käme, ließe sich damit nichts anstellen: keine
 Wallet, kein Senden, keine Konfiguration, kein Herunterfahren. Andere
 RPC-Nutzer sind davon nicht betroffen.
+
+**Die Seite hat keine Anmeldung und veröffentlicht mehr, als es aussieht.**
+Wer Port 80 erreicht, liest die eigene Onion-Adresse des Nodes (und die von
+electrs), Adresse, Kennung und Datenmenge jeder verbundenen Gegenstelle und
+das Journal des Nodes vollständig — mit `logips=1` in der `bitcoin.conf` also
+auch jede Peer-Adresse, die bitcoind protokolliert. Wer im Heimnetz diesen
+Port erreicht, kann all das lesen; auf dem Router hat er nichts zu suchen.
 
 **Der Dienst läuft als eigener Systemnutzer** ohne Anmelderechte, abgeschottet
 über systemd (`ProtectSystem=strict`), mit genau einem beschreibbaren Pfad.
@@ -269,9 +283,9 @@ In `/etc/node-dashboard.conf`, danach `sudo systemctl restart node-dashboard`:
 
 | Schlüssel | Vorgabe | Bedeutung |
 |---|---|---|
-| `LANGUAGE` | `en` | Sprache der Seite: `de` oder `en` |
-| `INTERVAL` | 30 | Takt der Node-Abfrage in Sekunden |
-| `LOG_INTERVAL` | 5 | Takt der Protokollanzeige |
+| `LANGUAGE` | `de` | Sprache der Seite: `de` oder `en`. install.sh fragt und trägt sie ein |
+| `INTERVAL` | 21 | Takt der Node-Abfrage in Sekunden. install.sh schreibt 30 |
+| `LOG_INTERVAL` | 3 | Takt der Protokollanzeige. install.sh schreibt 5 |
 | `LOG_SERVICES` | `bitcoind` | Quellen, mit Komma getrennt. Leer schaltet ab |
 | `LOG_LINES` | 150 | Rücklauf im Protokoll. Es füllt die Spalte und rollt innen |
 | `RPC_TIMEOUT` | 45 | Zeitlimit je Abfrage in Sekunden |

@@ -31,6 +31,7 @@ import html
 import json
 import math
 import os
+import pathlib
 import re
 import shutil
 import subprocess
@@ -76,6 +77,9 @@ def load_dashboard():
     return module
 
 
+REAL = {}
+
+
 def replace_system_parts(nd, case):
     """Replace everything that exists only on the Pi with fixed values.
 
@@ -104,13 +108,28 @@ def replace_system_parts(nd, case):
 
     nd.read_file = fake_read
     nd.service_running = lambda name: True
+    # The real ones, kept: a check that runs against the stub proves the
+    # stub. port_open below is exactly that trap — it is replaced here, and
+    # the check for "a bad port is not an exception" would otherwise be
+    # asking the lambda (2026-09-06).
+    REAL["port_open"] = nd.port_open
     nd.port_open = lambda host, port: True
     nd.own_ip = lambda: "192.168.1.50"
     # electrs three blocks behind the tip: the bar must not be full.
     nd.electrs_indexed_height = lambda cfg: 915312 - 3
 
-    real_exists = os.path.exists
-    nd.os.path.exists = lambda p: True if ".service" in str(p) else real_exists(p)
+    # Units in a temp directory, and the lookup is pointed at it — the stub
+    # used to answer True to any path ending in .service, which made the
+    # lookup itself untestable: it only ever searched /etc/systemd/system,
+    # and every installation whose bitcoind came from a distribution package
+    # (unit in /usr/lib/systemd/system) got an empty log panel, no
+    # announcements and no chain check. Reported from outside on 2026-09-06.
+    # The directory used here is the packaged one on purpose.
+    unit_dir = pathlib.Path(tempfile.mkdtemp(prefix="units-")) / "usr/lib/systemd/system"
+    unit_dir.mkdir(parents=True)
+    for unit in ("bitcoind.service", "electrs.service"):
+        (unit_dir / unit).write_text("[Unit]\n", encoding="utf-8")
+    nd.UNIT_DIRS = (str(unit_dir),)
 
     # A real log, not a single line. The mock used to answer "throttled=0x0"
     # to every call — including journalctl. That made the log 18 pixels tall
@@ -1435,6 +1454,126 @@ def check_geometry(page, nd):
     geometrie.run(page, check, comma=(nd.LANGUAGE == "de"))
 
 
+def check_log_formats(nd):
+    """The two journal parsers against the wording of every Core release.
+
+    Both were written for v31.x and matched nothing else: on Core 26 to 30
+    the chain-check row stayed empty for good, on 26 to 29 the announcer as
+    well, and Core's master has dropped the field the sample line reads.
+    None of it showed, because an empty card looks like a quiet network —
+    and the mock speaks exactly the v31 wording the regexes expect, which is
+    the oracle problem again. This table is the contract: a new Core release
+    adds a row here first. Reported from outside on 2026-09-06.
+    """
+    print("\n  Journal formats across Core releases")
+    rows = [
+        # (Core, line, ANNOUNCE_LINE groups or None, SAMPLE_LINE groups or None)
+        ("v26–v29", "Saw new cmpctblock header hash=00ab peer=311", None, None),
+        ("v30–v31", "Saw new cmpctblock header hash=00ab height=965079 peer=311",
+         ("965079", "311"), None),
+        ("master", "Saw new header hash=00ab height=965079 peer=311", ("965079", "311"), None),
+        ("v26–v30", "New block-relay-only v2 peer connected: version: 70016, "
+         "blocks=965079, peer=818", None, ("965079", "818")),
+        ("v31", "New block-relay-only peer connected: transport: v2, version: 70016, "
+         "blocks=965079 peer=818", None, ("965079", "818")),
+        ("master", "New block-relay-only peer connected: transport: v2, version: 70016, "
+         "peer=818", None, None),
+    ]
+    for core, row, want_a, want_s in rows:
+        got_a = nd.ANNOUNCE_LINE.search(row)
+        got_s = nd.SAMPLE_LINE.search(row)
+        check((got_a.groups() if got_a else None) == want_a,
+              f"announcement line, Core {core}", str(got_a.groups() if got_a else None))
+        check((got_s.groups() if got_s else None) == want_s,
+              f"probe line, Core {core}", str(got_s.groups() if got_s else None))
+    # And a version that cannot answer must say so instead of showing a gap.
+    nd.LOG_FORMAT_GAP.add("stichprobe")
+    nd.CHAIN_SAMPLES.clear()
+    notice = nd.chain_check_markup({"bloecke": 915312})
+    nd.LOG_FORMAT_GAP.discard("stichprobe")
+    check(notice and "abgleich" in notice,
+          "a Core that logs no height says so instead of leaving a blank",
+          repr(notice)[:60])
+
+
+def check_config_robustness(nd, cfg_path):
+    """A typo in the configuration must never stop the page being written.
+
+    It did until 2026-09-06: a bare int("30s") inside one_pass, caught by
+    main(), one line in the journal — and the last page frozen on screen
+    while systemd went on reporting the service as active. The same failure
+    the rename of 2026-08-23 produced, from the config file this time.
+    """
+    print("\n  Configuration with typos in it")
+    good = nd.read_config(cfg_path)
+    for key, bad in (("INTERVAL", "30s"), ("LOG_LINES", "150 lines"),
+                     ("ELECTRS_PORT", "electrum"), ("TOLERANCE", ""),
+                     ("PEERS_MAX", "-4"), ("RPC_TIMEOUT", "None")):
+        broken = dict(good, **{key: bad})
+        try:
+            nd.one_pass(broken)
+            check(True, f"{key}={bad!r} does not stop the pass")
+        except Exception as e:                    # noqa: BLE001 — that is the point
+            check(False, f"{key}={bad!r} does not stop the pass", f"{type(e).__name__}: {e}")
+    check(REAL["port_open"]("127.0.0.1", "nonsense") is False,
+          "a port that is not a number is not an exception")
+
+
+def check_reorg(nd, cfg):
+    """After a reorg the figures of the orphaned block have to go.
+
+    BLOCK_DATA was keyed by height alone and a height was fetched once, so a
+    reorg left the volume, transaction count and median fee of a block that
+    no longer exists on the page for up to 24 hours — a measured-looking
+    number describing nothing, which is the one thing this project does not
+    do (2026-09-06, from outside).
+    """
+    print("\n  Reorg")
+    tip = nd.BLOCK_DATA[-1][0] if nd.BLOCK_DATA else 0
+    if not tip:
+        print("  [ --  ] no block data in this case")
+        return
+    calls = [0]
+    real = nd.rpc
+    nd.start_pass(600)          # see check_cache: a pass has a time budget
+
+    def counting(c, method, params=None):
+        if method == "getblockstats":
+            calls[0] += 1
+        return real(c, method, params)
+
+    nd.rpc = counting
+    try:
+        nd.BLOCK_TIP[0], nd.BLOCK_TIP[1] = tip, "hash-A"
+        calls[0] = 0
+        nd.fetch_block_data(cfg, tip, "hash-A")
+        check(calls[0] == 0, "same tip, same hash: nothing is fetched again", str(calls[0]))
+        calls[0] = 0
+        nd.fetch_block_data(cfg, tip, "hash-B")
+        check(calls[0] == nd.REORG_DEPTH,
+              f"same tip, another hash: the last {nd.REORG_DEPTH} blocks are read again",
+              str(calls[0]))
+        nd.fetch_block_data(cfg, tip - 2, "hash-C")
+        check(not [e for e in nd.BLOCK_DATA if e[0] > tip - 2],
+              "a shorter chain drops everything above the new tip")
+    finally:
+        nd.rpc = real
+
+
+def check_aria_labels(page, nd):
+    """No German in the English page — the aria-labels included.
+
+    3.5.2 fixed twelve German source strings and added a guard for visible
+    text. The copy buttons kept saying "… kopieren" for another four days,
+    because no check reads an attribute (2026-09-06, from outside).
+    """
+    german = re.compile(r"\b(kopieren|Bl[oö]cke[n]?|Knoten|l[aä]uft|eingehend|"
+                        r"ausgehend|Einträge|Stunden)\b")
+    bad = [l for l in re.findall(r'aria-label="([^"]*)"', page) if german.search(l)]
+    check(not bad if nd.LANGUAGE == "en" else True,
+          "no German word in any aria-label of the English page", " | ".join(bad[:3]))
+
+
 def check_dash_js():
     """Run dash.js against the page just written, under jsdom (tests/dash-test.js).
     The script is the one language in the repo nothing executed until
@@ -1720,6 +1859,11 @@ def check_cache(nd, cfg):
     # The previous cycle has already filled the buffers — for the measurement
     # they must be empty, otherwise nothing is measured.
     nd.BLOCK_DATA.clear()
+    # And a budget, as one_pass sets one: since 2026-09-06 fetch_block_data
+    # stops when the pass has spent its time, and the deadline of the last
+    # pass is long gone here. Without this the fill fetches nothing and the
+    # check measures the budget instead of the cache.
+    nd.start_pass(600)
 
     nd.rpc = counting
     nd.fetch_block_data(cfg, 915312)
@@ -1788,7 +1932,8 @@ def main():
         check_names(nd)
 
         replace_system_parts(nd, args.case)
-        cfg = nd.read_config(write_config(args.language))
+        config_path = write_config(args.language)
+        cfg = nd.read_config(config_path)
         nd.one_pass(cfg)
 
         page = (OUTPUT / "index.html").read_text(encoding="utf-8")
@@ -1819,9 +1964,15 @@ def main():
             check_hashrate(nd, cfg)
             check_own_node(nd)
         check_geometry(page, nd)
+        check_log_formats(nd)
+        check_aria_labels(page, nd)
         if args.case == "synchron":
             check_dash_js()
             check_cache(nd, cfg)
+            # Last, both of them: they fill BLOCK_DATA and write the page
+            # again, and the caching check needs the state the pass left.
+            check_reorg(nd, cfg)
+        check_config_robustness(nd, config_path)
     finally:
         mock.terminate()
         mock.wait(timeout=5)

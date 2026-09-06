@@ -17,7 +17,6 @@ import argparse
 import base64
 import hashlib
 import json
-import math
 import os
 import re
 import shutil
@@ -30,7 +29,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "3.5.4"
+VERSION = "3.6"
 
 # ================================================================= Language ==
 # English is the source language: the code carries the English text, the table
@@ -249,7 +248,12 @@ DE = {
         "gelegentlich länger als das Zeitlimit.",
     "Point at a line for identifier, services and connection time.":
         "Auf eine Zeile zeigen für Kennung, Dienste und Verbindungsdauer.",
+    # The button's label for screen readers. It stood in the markup as
+    # "… kopieren" — one German word inside the English page, invisible to
+    # every check because no check reads aria-label (2026-09-06).
+    "copy {label}": "{label} kopieren",
     "No log source configured.": "Keine Protokollquelle eingerichtet.",
+    "no unit '{service}' found": "keine Unit '{service}' gefunden",
     "no entries": "keine Einträge",
     "log not readable: {e}": "Protokoll nicht lesbar: {e}",
     "no access to the journal": "kein Zugriff auf das Journal",
@@ -291,6 +295,8 @@ DE = {
         "{k} Stichproben melden bis zu {n} Blöcke mehr als wir",
     "Chain check: every few minutes Core asks a random node for its height. Last {when}":
         "Kettenabgleich: Core fragt alle paar Minuten einen zufälligen Knoten nach seiner Höhe. Zuletzt {when}",
+    "Chain check: this Bitcoin Core does not log the height of a probe":
+        "Kettenabgleich: dieses Bitcoin Core meldet die Höhe einer Stichprobe nicht",
     "Chain check: recent probes report {n} blocks more":
         "Kettenabgleich: die jüngsten Stichproben melden {n} Blöcke mehr",
     "Block {n} · announced {when} by {peer}": "Block {n} · angekündigt {when} von {peer}",
@@ -472,6 +478,13 @@ RETARGET_INTERVAL = 2016     # difficulty is adjusted every 2016 blocks
 # megabytes.
 BLOCK_DATA = []      # (height, time, output_sat, fee_sat_vb, count)
 BLOCK_KEEP = 144     # roughly 24 hours
+# The tip we last read, as (height, hash). A reorg replaces a block without
+# changing its height, and the figures are keyed by height alone: the bars
+# then kept showing the orphaned block's volume and fee for a whole day
+# (2026-09-06). When the hash under the same height changes, the last few
+# entries are dropped and read again.
+BLOCK_TIP = [None, None]
+REORG_DEPTH = 6
 
 # Network hashrate since the genesis block for the curve behind the state
 # bar (Jakob, 2026-09-03: "price follows hashrate" — show it like a price
@@ -707,7 +720,7 @@ def format_btc(satoshi):
     return decimal_sep(f"{btc:,.2f}") + " BTC"
 
 
-def fetch_block_data(cfg, tip):
+def fetch_block_data(cfg, tip, tip_hash=None):
     """Fetch missing per-block figures and keep the last 144.
 
     The first pass loads 144 blocks, after that only the newest one. Bitcoin
@@ -716,6 +729,15 @@ def fetch_block_data(cfg, tip):
     """
     if not tip:
         return
+    # A chain shorter than what we hold: everything above the tip is gone.
+    if any(e[0] > tip for e in BLOCK_DATA):
+        BLOCK_DATA[:] = [e for e in BLOCK_DATA if e[0] <= tip]
+    # Same height, another block — the tip was replaced. Drop the last few
+    # so their figures are read from the chain that actually stands now.
+    if (tip_hash and BLOCK_TIP[1] and tip_hash != BLOCK_TIP[1]
+            and BLOCK_TIP[0] == tip):
+        BLOCK_DATA[:] = [e for e in BLOCK_DATA if e[0] <= tip - REORG_DEPTH]
+    BLOCK_TIP[0], BLOCK_TIP[1] = tip, tip_hash or BLOCK_TIP[1]
     present = {h for h, *_ in BLOCK_DATA}
     start = max(1, tip - BLOCK_KEEP + 1)
     missing = [h for h in range(start, tip + 1) if h not in present]
@@ -725,6 +747,8 @@ def fetch_block_data(cfg, tip):
     # The very first pass can take a few seconds; after that it is at most
     # one block per cycle.
     for height in missing[-BLOCK_KEEP:]:
+        if budget_spent():
+            break        # the rest follows next pass; the cache is incremental
         try:
             st = rpc(cfg, "getblockstats",
                      [height, ["height", "time", "total_out", "txs",
@@ -766,6 +790,8 @@ def fetch_hashrate(cfg, tip):
     present = {h for h, _ in HASHRATE}
     missing = [h for h in reversed(anchors) if h not in present][:HASHRATE_PER_PASS]
     for height in missing:
+        if budget_spent():
+            break        # continues next pass, newest first as before
         # The same window for every point, the tip included: a trailing
         # difficulty period. Until 2026-09-06 the tip got `tip % 2016`, so
         # right after a retarget the headline was Core's estimate over a
@@ -911,6 +937,57 @@ def read_config(path):
     return values
 
 
+def config_int(cfg, key, standard, low=None, high=None):
+    """A whole number from the configuration — never an exception.
+
+    Every int(cfg[...]) used to stand bare in the code. A single typo
+    ("INTERVAL=30s") then raised ValueError inside one_pass, main() caught
+    it, printed one line to the journal and slept — and the page froze on
+    screen while systemd kept reporting the service as active. The same
+    failure mode the rename of 2026-08-23 produced, from a config file this
+    time. A bad value now falls back to the default and says so once.
+    """
+    raw = cfg.get(key, standard)
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        if key not in CONFIG_COMPLAINED:
+            CONFIG_COMPLAINED.add(key)
+            print(f"Configuration: {key}={raw!r} is not a whole number — "
+                  f"using {standard}", file=sys.stderr)
+        value = int(standard)
+    if low is not None:
+        value = max(low, value)
+    if high is not None:
+        value = min(high, value)
+    return value
+
+
+CONFIG_COMPLAINED = set()
+
+
+UNIT_DIRS = ("/etc/systemd/system", "/run/systemd/system",
+             "/usr/lib/systemd/system", "/lib/systemd/system")
+
+
+def unit_exists(name):
+    """Is there a systemd unit of this name — wherever it was installed?
+
+    Only /etc/systemd/system was looked at until 2026-09-06. Bitcoin Core
+    from a distribution package puts its unit under /usr/lib/systemd/system,
+    and every such installation got an empty log panel ("no log source
+    configured"), no announcements, no chain check — silently, because a
+    missing file is not an error. The test could not see it either: it
+    replaces os.path.exists with one that says yes to anything ending in
+    .service.
+    """
+    unit = f"{name}.service"
+    # A plain file test, no systemctl: one more process every cycle for a
+    # question four stat() calls answer, and the test run would have to know
+    # about the call as well.
+    return any(os.path.exists(os.path.join(base, unit)) for base in UNIT_DIRS)
+
+
 # ======================================================================== RPC
 class RpcError(Exception):
     pass
@@ -943,10 +1020,13 @@ def rpc(cfg, method, params=None):
             "Authorization": f"Basic {auth}",
         },
     )
-    try:
-        limit_value = max(5, int(cfg.get("RPC_TIMEOUT", 45)))
-    except (TypeError, ValueError):
-        limit_value = 45
+    limit_value = config_int(cfg, "RPC_TIMEOUT", 45, low=5, high=600)
+    # Never wait far past the deadline of this pass — see budget_left(). A
+    # spent budget does not shorten a call that is already under way: the
+    # figures of collect_node have to arrive, only the history fetches stop.
+    left = budget_left()
+    if left is not None and left > 1:
+        limit_value = min(limit_value, int(left))
 
     try:
         with urllib.request.urlopen(request, timeout=limit_value) as response:
@@ -1077,6 +1157,34 @@ def halving_facts(height):
     # One block every ten minutes on average
     date = datetime.now(timezone.utc).astimezone().timestamp() + remaining * 600
     return reward, next_height, remaining, datetime.fromtimestamp(date)
+
+
+# ---------------------------------------------------------- Pass budget ----
+# One pass is a straight line: query, build, write. Nothing runs beside it.
+# The first fill asks for 144 blocks and 120 hashrate points one after the
+# other, and every one of them may wait RPC_TIMEOUT seconds — 45 by default.
+# In the worst case a single pass then holds the loop for hours, the log
+# panel stops refreshing with it, and the page freezes while the service is
+# still 'active'. So a pass gets a budget: once it is spent, the fetches that
+# fill history stop and continue on the next pass. Nothing is lost — both
+# caches are incremental by design.
+PASS_DEADLINE = [None]
+
+
+def start_pass(seconds):
+    PASS_DEADLINE[0] = time.monotonic() + max(10.0, float(seconds))
+
+
+def budget_left():
+    """Seconds left in this pass, or None when no budget is set."""
+    if PASS_DEADLINE[0] is None:
+        return None
+    return max(0.0, PASS_DEADLINE[0] - time.monotonic())
+
+
+def budget_spent():
+    left = budget_left()
+    return left is not None and left <= 0
 
 
 # ============================================================= Chronicle ===
@@ -1449,10 +1557,13 @@ def service_running(name):
 
 
 def port_open(host, port):
+    # ValueError, not just OSError: the port comes from the configuration
+    # file, and int("electrum") used to travel all the way up and kill the
+    # pass (2026-09-06).
     try:
         with socket.create_connection((host, int(port)), timeout=2):
             return True
-    except OSError:
+    except (OSError, ValueError, TypeError):
         return False
 
 
@@ -1671,7 +1782,7 @@ def collect_node(cfg):
     # Only once the chain is up to date — during the initial sync the figures
     # would be from 2010 and fetching them a pure waste.
     if in_sync:
-        fetch_block_data(cfg, blocks)
+        fetch_block_data(cfg, blocks, chain.get("bestblockhash"))
         fetch_hashrate(cfg, blocks)
 
     # Rate and remaining time are shown large in the state bar above.
@@ -1910,6 +2021,10 @@ def shorten_address(url):
 
 
 LAST_PEERS = []
+# Every peer id Core reported in the last pass — before PEERS_MAX cuts the
+# list down for the drawing. Without it a connected peer beyond the limit was
+# printed as "(no longer connected)", which is simply untrue (2026-09-06).
+CONNECTED_IDS = set()
 
 # Which peer handed us each block, and whom we handed it on to. Keyed by
 # Core's peer id, lives only in the running process like every other history.
@@ -1962,10 +2077,28 @@ def track_block_traffic(peers):
 #   height -> (peer id, unix time of the announcement)
 ANNOUNCED = {}
 ANNOUNCED_KEEP = 24 * 3600
+# The wording of both lines has moved with almost every Core release, and
+# the parser used to match exactly one of them — v31.x. Written out, so the
+# next change is a one-line edit and not a silent blank card:
+#   v26–v29  Saw new cmpctblock header hash=… peer=311      (no height at all)
+#   v30–v31  Saw new cmpctblock header hash=… height=… peer=311
+#   master   Saw new cmpctblock header hash=… height=… peer=311[, peeraddr=…]
+# Height and peer are read independently now, so a line without a height is
+# still counted for the ranking; only the block age falls back to the
+# miner's clock. Checked against the Core sources on 2026-09-06.
 ANNOUNCE_LINE = re.compile(
-    r"Saw new (?:cmpctblock )?header hash=\S+ height=(\d+)\S* .*?peer=(\d+)")
+    r"Saw new (?:cmpctblock )?header hash=\S+\s+height=(\d+)\b.*?\bpeer=(\d+)")
+# The same event as Core 26–29 wrote it — without the height. Matched only so
+# the page can say why the ranking is empty instead of quietly showing
+# nothing at all.
+ANNOUNCE_LINE_NO_HEIGHT = re.compile(
+    r"Saw new (?:cmpctblock )?header hash=\S+\s+peer=(\d+)")
 JOURNAL_TIME = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+\-]\d{2}:\d{2})")
 ANNOUNCED_PRIMED = [False]
+# Line cap for the one 25-hour read at start. Core writes one announcement
+# per block; 25 hours are ~150. The cap is what keeps a chatty log from
+# turning the first pass into a minute of I/O.
+ANNOUNCED_PRIME_LINES = 20000
 # Core numbers its peers from zero at every start. An announcement from
 # before the last restart therefore names a peer id that a stranger of
 # today may carry again — 13 minutes after a restart the ranking showed
@@ -1988,9 +2121,26 @@ def before_restart(when):
 # is that sample. Kept for an hour: (time, peer id, height) (2026-09-01).
 CHAIN_SAMPLES = []
 CHAIN_SAMPLES_KEEP = 3600
+#   v26–v30  New block-relay-only v2 peer connected: version: …, blocks=…, peer=…
+#   v31      New block-relay-only peer connected: transport: v2, version: …,
+#            blocks=… peer=…
+#   master   … no blocks= at all — the field was dropped with the move to
+#            LogPeer(); the chain check then has no sample to read and says
+#            so instead of showing an empty row.
+# The transport token between type and "peer connected" is optional, the
+# comma after blocks= is optional, and anything may stand between the two
+# fields. Checked against the Core sources on 2026-09-06.
 SAMPLE_LINE = re.compile(
-    r"New (?:block-relay-only|outbound-full-relay|feeler) peer connected: "
-    r".*?blocks=(-?\d+) peer=(\d+)")
+    r"New (?:block-relay-only|outbound-full-relay|feeler)\b[^:]*peer connected: "
+    r".*?\bblocks=(-?\d+)\b.*?\bpeer=(\d+)")
+# The line as Core writes it since the move to LogPeer(): no blocks= any
+# more. There is nothing to measure then — the card says so.
+SAMPLE_LINE_NO_BLOCKS = re.compile(
+    r"New (?:block-relay-only|outbound-full-relay|feeler)\b[^:]*peer connected: "
+    r"(?!.*\bblocks=)")
+# What this Core version does not put in its log. Read by the network card so
+# an empty row is explained rather than left blank (2026-09-06).
+LOG_FORMAT_GAP = set()
 
 
 def collect_announcements(cfg):
@@ -2002,18 +2152,27 @@ def collect_announcements(cfg):
     counts, and the journal is read oldest first.
     """
     service = "bitcoind"
-    if not os.path.exists(f"/etc/systemd/system/{service}.service"):
+    if not unit_exists(service):
         return
     if ANNOUNCED_PRIMED[0]:
         window = ["-n", "300"]
     else:
-        window = ["--since", "-25h"]
+        # "--since -25h" is unbounded: on a node with debug categories on it
+        # is hundreds of megabytes, read into memory in one piece, and the
+        # 20 s timeout then expired on every pass — the priming never
+        # finished and the read started over every cycle, for good. A line
+        # cap bounds it; 25 h of announcements is at most ~150 lines, and
+        # the samples and the restart marker sit in the same window.
+        window = ["--since", "-25h", "-n", str(ANNOUNCED_PRIME_LINES)]
     try:
         r = subprocess.run(
             ["journalctl", "-u", service, *window, "--no-pager",
              "--output=short-iso"],
             capture_output=True, text=True, timeout=20, check=False)
     except (OSError, subprocess.SubprocessError):
+        # A timeout must not leave the priming stuck in a loop: take what the
+        # short window gives from now on.
+        ANNOUNCED_PRIMED[0] = True
         return
     if r.returncode != 0:
         return
@@ -2036,8 +2195,13 @@ def collect_announcements(cfg):
             if height not in ANNOUNCED:
                 ANNOUNCED[height] = (peer_id, when)
             continue
+        if ANNOUNCE_LINE_NO_HEIGHT.search(row):
+            LOG_FORMAT_GAP.add("hoehe")
+            continue
 
         match = SAMPLE_LINE.search(row)
+        if not match and SAMPLE_LINE_NO_BLOCKS.search(row):
+            LOG_FORMAT_GAP.add("stichprobe")
         if match:
             height, peer_id = int(match.group(1)), int(match.group(2))
             if (when, peer_id) not in seen:
@@ -2104,6 +2268,14 @@ def chain_check_markup(kz):
     """Dots and sentence for the head of the network card."""
     dots, ok, total, ahead, alarm = chain_check(kz)
     if not total:
+        # Nothing to show is not the same as nothing to say: on a Core whose
+        # log does not carry the peer's height the row can never fill, and a
+        # blank space would look like a fault of ours (2026-09-06).
+        if "stichprobe" in LOG_FORMAT_GAP:
+            return ('<span class="abgleich">'
+                    + html_escape(t("Chain check: this Bitcoin Core does not "
+                                    "log the height of a probe"))
+                    + "</span>")
         return ""
     last = format_age(time.time() - CHAIN_SAMPLES[-1][0])
     # Each sample is compared with our height AT THAT TIME, so the sentence
@@ -2243,7 +2415,9 @@ def block_path_text(peers, kz):
 
     if ann_id is not None:
         ann_name = peer_label(peers, ann_id, ann_when)
-        if ann_index is None:
+        # Not drawn is not the same as not connected: the map shows at most
+        # PEERS_MAX rows, the node may hold more.
+        if ann_index is None and ann_id not in CONNECTED_IDS:
             ann_name += " " + t("(no longer connected)")
         when = format_age(time.time() - ann_when)
         head = t("Block {n} · announced {when} by {peer}", n=format_number(height),
@@ -2365,6 +2539,8 @@ def collect_peers(cfg, limit):
     # Group by network type first, fastest first within each group. The
     # grouping keeps dots of the same colour together instead of letting them
     # mix.
+    CONNECTED_IDS.clear()
+    CONNECTED_IDS.update(p["id"] for p in peers)
     rank = {"electrs": 0, "onion": 1, "ipv4": 2, "ipv6": 3, "i2p": 4, "cjdns": 5}
     peers.sort(key=lambda e: (rank.get(e["netz"], 9),
                               e["ping_ms"] if e["ping_ms"] is not None else 9e9))
@@ -2753,10 +2929,11 @@ def collect_log(cfg):
     foreign nodes, and those are picked by the peer, not by us.
     """
     sections = []
-    max_lines = max(5, min(200, int(cfg.get("LOG_LINES", 40))))
+    max_lines = config_int(cfg, "LOG_LINES", 150, low=5, high=200)
 
     for service in [d.strip() for d in cfg.get("LOG_SERVICES", "").split(",") if d.strip()]:
-        if not os.path.exists(f"/etc/systemd/system/{service}.service"):
+        if not unit_exists(service):
+            sections.append((service, t("no unit '{service}' found", service=service)))
             continue
         try:
             r = subprocess.run(
@@ -2843,7 +3020,7 @@ def electrs_indexed_height(cfg):
     if rough:
         return max(rough)
 
-    port = int(cfg.get("ELECTRS_PORT", 50001))
+    port = config_int(cfg, "ELECTRS_PORT", 50001, low=1, high=65535)
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
             sock.sendall(b'{"jsonrpc":"2.0","id":0,'
@@ -2869,13 +3046,13 @@ def collect_electrum(cfg, tip=None):
     Electrum. Without it the wallet asks foreign servers, and those learn
     which addresses belong to you.
     """
-    port = cfg["ELECTRS_PORT"]
+    port = config_int(cfg, "ELECTRS_PORT", 50001, low=1, high=65535)
     # Recognised by the unit OR by the port (2026-09-06, Jakob): Fulcrum,
     # ElectrumX or an electrs under another unit name all answer on the
     # Electrum port, and that is what the wallet cares about. The index
     # figure stays electrs-only — it comes from electrs' own Prometheus
     # endpoint.
-    has_unit = os.path.exists("/etc/systemd/system/electrs.service")
+    has_unit = unit_exists("electrs")
     reachable = port_open("127.0.0.1", port)
     running = service_running("electrs") if has_unit else reachable
 
@@ -4117,6 +4294,11 @@ def html_escape(text):
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace('"', "&quot;")
+        # The apostrophe too. Every attribute in this file happens to use
+        # double quotes today, and that was the only thing that made leaving
+        # it out safe — one attribute written with single quotes and the
+        # escaping stops holding. Reported from outside on 2026-09-06.
+        .replace("'", "&#39;")
     )
 
 
@@ -4262,7 +4444,7 @@ def render_card(group, extra_class=""):
                 f"<code class=kopier>{html_escape(value)}</code>"
                 '<button type=button class=kopierknopf '
                 f'data-wert="{html_escape(value)}" '
-                f'aria-label="{html_escape(label)} kopieren">'
+                f'aria-label="{html_escape(t("copy {label}", label=label))}">'
                 # Two offset rectangles — the usual "copy" glyph, drawn as
                 # a path rather than taken from a font.
                 '<svg viewBox="0 0 16 16" aria-hidden="true">'
@@ -4742,8 +4924,8 @@ def build_page(cfg, progress, in_sync, groups, error=None,
                zones=None, warming_up=False, updates=None, tor=None):
     now = datetime.now(timezone.utc).astimezone()
     hostname = html_escape(socket.gethostname())
-    interval = html_escape(cfg["INTERVAL"])
-    log_step = html_escape(str(cfg.get("LOG_INTERVAL", "3")))
+    interval = html_escape(config_int(cfg, "INTERVAL", 21, low=5))
+    log_step = html_escape(config_int(cfg, "LOG_INTERVAL", 3, low=1))
 
     if zones is None:
         zones = build_zones(cfg, progress, in_sync, groups, error,
@@ -4816,7 +4998,7 @@ def build_page(cfg, progress, in_sync, groups, error=None,
         f'<div class=kopfrechts><span class=puls></span>'
         f'<span id=stempel>{now.strftime(TIME_FORMAT[LANGUAGE])}</span></div>'
         "</div>"
-        + build_chronicle(int(cfg.get("INTERVAL", 21))) +
+        + build_chronicle(config_int(cfg, "INTERVAL", 21, low=5)) +
         "</header>",
         # Two columns: everything interpreted on the left, the raw log at
         # full height on the right. On narrow screens the grid collapses back
@@ -5042,14 +5224,11 @@ def one_pass(cfg):
     progress, in_sync, error = 0.0, False, None
     summary, peers, stale_for, warming_up = {}, [], None, False
 
-    try:
-        tolerance = max(1, int(cfg.get("TOLERANCE", 3)))
-    except (TypeError, ValueError):
-        tolerance = 3
-    try:
-        peers_max = max(1, int(cfg.get("PEERS_MAX", 64)))
-    except (TypeError, ValueError):
-        peers_max = 64
+    # 70 % of one interval, at least 10 s: what is left of the pass belongs
+    # to writing the page, and the history caches continue next time.
+    start_pass(config_int(cfg, "INTERVAL", 21, low=5) * 0.7)
+    tolerance = config_int(cfg, "TOLERANCE", 3, low=1)
+    peers_max = config_int(cfg, "PEERS_MAX", 64, low=1, high=1024)
 
     try:
         progress, in_sync, node_gruppen, summary = collect_node(cfg)
@@ -5149,30 +5328,24 @@ def one_pass(cfg):
 
 
 def main():
-    p = argparse.ArgumentParser(description="Erzeugt eine statische Statusseite fuer den Node.")
+    p = argparse.ArgumentParser(description="Writes a static status page for the node.")
     p.add_argument("--config", default="/etc/node-dashboard.conf")
     p.add_argument("--once", action="store_true",
-                   help="Nur einmal erzeugen statt dauerhaft zu laufen")
+                   help="Write the page once instead of running on")
     args = p.parse_args()
 
     cfg = read_config(args.config)
 
     if args.once:
         error = one_pass(cfg)
-        print("Seite geschrieben nach", os.path.join(cfg["OUT_DIR"], "index.html"))
+        print("Page written to", os.path.join(cfg["OUT_DIR"], "index.html"))
         if error:
-            print("Hinweis:", error, file=sys.stderr)
+            print("Note:", error, file=sys.stderr)
         return 0
 
     # A typo in the configuration must not turn into a restart loop.
-    try:
-        interval = max(5, int(cfg["INTERVAL"]))
-    except (TypeError, ValueError):
-        interval = 30
-    try:
-        log_step = max(1, min(interval, int(cfg.get("LOG_INTERVAL", 3))))
-    except (TypeError, ValueError):
-        log_step = 5
+    interval = config_int(cfg, "INTERVAL", 21, low=5)
+    log_step = min(interval, config_int(cfg, "LOG_INTERVAL", 3, low=1))
 
     # Two rhythms in one loop: query the node rarely, refresh the log often.
     # No second process, no concurrency.

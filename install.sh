@@ -26,6 +26,7 @@
 #   sudo bash install.sh --language en            page language (de or en)
 #   sudo bash install.sh --datadir /path/to/data  give the data directory
 #   sudo bash install.sh --port 8080              another port for the page
+#   sudo bash install.sh --rpc-port 18332         RPC port of the node (else detected)
 #   sudo bash install.sh --subnet 192.168.1.0/24  give the local network
 #   sudo bash install.sh --electrum-port 50002   port of your Electrum server (default 50001)
 #   sudo bash install.sh --restart                restart bitcoind at the end
@@ -52,10 +53,11 @@ RESTART=0
 YES=0
 ELECTRUM_PORT=50001
 LANGUAGE=""
+RPC_PORT=""
 
 # Read-only methods, all of them. Before adding anything here, check that the
 # method really changes nothing.
-METHODS="getblockchaininfo,getnetworkinfo,getmempoolinfo,getconnectioncount,uptime,estimatesmartfee,getblockstats,getblockhash,getblockheader,getpeerinfo,getnetworkhashps"
+METHODS="getblockchaininfo,getnetworkinfo,getmempoolinfo,getconnectioncount,uptime,estimatesmartfee,getblockstats,getpeerinfo,getnetworkhashps"
 
 # Colour only when the output is a terminal; a log file gets plain text.
 if [[ -t 1 ]]; then
@@ -104,14 +106,57 @@ need_package() {
             fail "no apt-get on this system." "Install $pkg with your package manager and run this script again."
         fi
         info "apt-get install -y $pkg …"
-        if DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$pkg" >/tmp/install-"$pkg".log 2>&1; then
+        # mktemp, not /tmp/install-$pkg.log: that path is predictable and
+        # this runs as root — anyone could have put a symlink there and had
+        # the file it points at truncated (2026-09-06).
+        local log
+        log="$(mktemp)" || fail "no temporary file could be created."
+        if DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$pkg" >"$log" 2>&1; then
             ok "$pkg installed"
+            rm -f "$log"
         else
-            fail "$pkg could not be installed. The last lines of apt:" "$(tail -n 5 /tmp/install-"$pkg".log)" "Then run this script again."
+            fail "$pkg could not be installed. The last lines of apt:" "$(tail -n 5 "$log")" "Then run this script again."
         fi
     else
         return 1
     fi
+}
+
+# Insert lines into the network-agnostic part of bitcoin.conf — everything
+# above the first [section] header. Appending at the end put them inside
+# whatever section came last: on a file ending in [test] the account existed
+# on testnet only, mainnet answered 401, and the page's hint pointed at the
+# password (2026-09-06). Written back through the original file (cat >), so
+# owner and mode stay as they were — bitcoin.conf belongs to the node's user.
+conf_insert() {
+    local file="$1" block="$2" tmp rc
+    tmp="$(mktemp)" || return 1
+    awk -v blockfile="$block" '
+        function emit(   line) { while ((getline line < blockfile) > 0) print line
+                                 close(blockfile) }
+        !done && /^[[:space:]]*\[[^]]+\][[:space:]]*$/ { emit(); done = 1 }
+        { print }
+        END { if (!done) emit() }
+    ' "$file" > "$tmp" && cat "$tmp" > "$file"
+    rc=$?
+    rm -f "$tmp"
+    return $rc
+}
+
+# A value out of the network-agnostic part of bitcoin.conf.
+bitcoin_conf_value() {
+    sed -n "/^[[:space:]]*\[/q; s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" \
+        "$BITCOIN_CONF" | head -1
+}
+
+# A value out of our own configuration file, so a second run does not throw
+# away what somebody edited there. Until 2026-09-06 the file was rewritten
+# from the defaults on every run: a hand-set INTERVAL, LOG_LINES, PEERS_MAX
+# or ELECTRS_METRICS was gone, and a German page came back English.
+conf_value() {
+    local v=""
+    [[ -f "$CONF" ]] && v="$(sed -n "s/^$1=//p" "$CONF" | head -1)"
+    printf '%s' "${v:-$2}"
 }
 
 # The one comment that says "this rule is ours". Set on the way in, matched
@@ -140,13 +185,26 @@ ufw_delete_marked() {
     done
 }
 
+# An option that takes a value must be given one. Until 2026-09-06 the loop
+# ran "shift 2" on a single remaining argument: bash refuses, $# stays 1, and
+# the same case runs again — "sudo bash install.sh --datadir" span forever,
+# printing shift errors, until Ctrl-C.
+# Called as a statement, never inside $( ): fail() ends the script with
+# exit, and inside a command substitution that would only end the subshell —
+# the loop would run on with an empty value.
+need_value() {
+    [[ -n "${2:-}" ]] || fail "$1 needs a value." \
+        "sudo bash install.sh --help  lists the options"
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --language|--lang) LANGUAGE="${2:-}"; shift 2 ;;
-        --datadir)         DATADIR="${2:-}"; shift 2 ;;
-        --port)            PORT="${2:-}"; shift 2 ;;
-        --subnet)          SUBNET="${2:-}"; shift 2 ;;
-        --electrum-port)   ELECTRUM_PORT="${2:-}"; shift 2 ;;
+        --language|--lang) need_value "$1" "${2:-}"; LANGUAGE="$2"; shift 2 ;;
+        --datadir)         need_value "$1" "${2:-}"; DATADIR="$2"; shift 2 ;;
+        --port)            need_value "$1" "${2:-}"; PORT="$2"; shift 2 ;;
+        --rpc-port)        need_value "$1" "${2:-}"; RPC_PORT="$2"; shift 2 ;;
+        --subnet)          need_value "$1" "${2:-}"; SUBNET="$2"; shift 2 ;;
+        --electrum-port)   need_value "$1" "${2:-}"; ELECTRUM_PORT="$2"; shift 2 ;;
         --restart)         RESTART=1; shift ;;
         --yes|-y)          YES=1; shift ;;
         --uninstall)       ACTION="remove"; shift ;;
@@ -154,6 +212,17 @@ while [[ $# -gt 0 ]]; do
         *) fail "Unknown option: $1" "sudo bash install.sh --help  lists the options" ;;
     esac
 done
+
+# Ports and the subnet end up in the nginx configuration, in a ufw rule and
+# in a configuration file. They are checked before any of that happens.
+[[ "$PORT" =~ ^[0-9]+$ ]] && (( PORT >= 1 && PORT <= 65535 )) \
+    || fail "--port $PORT is not a port number (1–65535)."
+[[ "$ELECTRUM_PORT" =~ ^[0-9]+$ ]] && (( ELECTRUM_PORT >= 1 && ELECTRUM_PORT <= 65535 )) \
+    || fail "--electrum-port $ELECTRUM_PORT is not a port number (1–65535)."
+[[ -z "$RPC_PORT" || ( "$RPC_PORT" =~ ^[0-9]+$ && RPC_PORT -ge 1 && RPC_PORT -le 65535 ) ]] \
+    || fail "--rpc-port $RPC_PORT is not a port number (1–65535)."
+[[ -z "$SUBNET" || "$SUBNET" =~ ^[0-9a-fA-F:.]+/[0-9]+$ ]] \
+    || fail "--subnet $SUBNET is not a CIDR range, e.g. 192.168.1.0/24."
 
 [[ $EUID -eq 0 ]] || fail "This script needs root." "sudo bash install.sh"
 
@@ -168,7 +237,14 @@ if [[ "$ACTION" == "remove" ]]; then
     rm -f /usr/local/bin/node-dashboard
     rm -rf "$WWW"
     rm -f /etc/nginx/sites-enabled/node-dashboard /etc/nginx/sites-available/node-dashboard
+    # The welcome site was unlinked during the install; without this, removing
+    # the dashboard left the machine with no nginx site at all (2026-09-06).
+    if [[ -e /etc/nginx/sites-available/default && ! -e /etc/nginx/sites-enabled/default ]]; then
+        ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+        ok "nginx's welcome site enabled again"
+    fi
     systemctl reload nginx >/dev/null 2>&1 || true
+    rm -rf /var/lib/node-dashboard
     userdel "$DASH_USER" >/dev/null 2>&1 || true
     # The firewall rule went with nothing until 2026-09-06: the port stayed
     # open for a page that was no longer there.
@@ -186,6 +262,13 @@ fi
 # a shell — the usual "curl … | bash" — the question would hang forever, so
 # English is assumed there. Everything else in this script runs without
 # questions.
+# A second run keeps the language of the first unless one is given: piped
+# into a shell the question cannot be asked, and the default (English) used
+# to flip a German installation over without a word (2026-09-06).
+if [[ -z "$LANGUAGE" && -f "$CONF" ]]; then
+    LANGUAGE="$(conf_value LANGUAGE "")"
+    [[ -n "$LANGUAGE" ]] && ok "language kept from $CONF: $LANGUAGE"
+fi
 if [[ -z "$LANGUAGE" ]]; then
     if [[ -t 0 && $YES -eq 0 ]]; then
         printf '\n\033[1m== Language ==\033[0m\n'
@@ -316,40 +399,64 @@ fi
 # ================================================================ RPC account =
 title "Read-only access to the node"
 
+RESTART_NEEDED=0
+KEEP_PASSWORD=0
 if grep -q "^rpcauth=${RPC_USER}:" "$BITCOIN_CONF" && [[ -f "$CONF" ]]; then
+    DASH_PASS="$(conf_value RPC_PASSWORD "")"
+    [[ -n "$DASH_PASS" ]] && KEEP_PASSWORD=1
+fi
+
+if (( KEEP_PASSWORD == 1 )); then
     ok "account already exists — password left unchanged"
-    DASH_PASS="$(sed -n 's/^RPC_PASSWORD=//p' "$CONF" | head -1)"
-    RESTART_NEEDED=0
 else
     DASH_PASS="$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")"
-    RPCAUTH="$(python3 - "$RPC_USER" "$DASH_PASS" <<'PY'
-import hashlib, hmac, os, sys
-user, password = sys.argv[1], sys.argv[2]
-salt = os.urandom(16).hex()
-digest = hmac.new(salt.encode(), password.encode(), hashlib.sha256).hexdigest()
-print(f"rpcauth={user}:{salt}${digest}")
-PY
-)"
+fi
+
+# The whitelist is written on every run, new password or not. It used to be
+# written once and never again: an installation from before getnetworkhashps
+# joined the list kept answering 403, the generator remembered the refusal
+# half an hour at a time, and the hashrate curve never appeared — with
+# nothing anywhere to say why (2026-09-06).
+WANTED_WHITELIST="rpcwhitelist=${RPC_USER}:${METHODS}"
+if (( KEEP_PASSWORD == 0 )) || ! grep -qxF "$WANTED_WHITELIST" "$BITCOIN_CONF"; then
     BACKUP="${BITCOIN_CONF}.$(date +%Y%m%d-%H%M%S).before-dashboard"
     cp -a "$BITCOIN_CONF" "$BACKUP"
     ok "bitcoin.conf backed up to $BACKUP"
 
-    # Remove old lines of the same user, then write fresh ones.
-    sed -i "/^rpcauth=${RPC_USER}:/d;/^rpcwhitelist=${RPC_USER}:/d" "$BITCOIN_CONF"
+    BLOCK="$(mktemp)" || fail "no temporary file could be created."
     {
         echo ""
         echo "# --- node dashboard, read-only access ----------------------------"
-        echo "$RPCAUTH"
-        echo "rpcwhitelist=${RPC_USER}:${METHODS}"
-    } >> "$BITCOIN_CONF"
+        if (( KEEP_PASSWORD == 0 )); then
+            RPC_USER="$RPC_USER" DASH_PASS="$DASH_PASS" python3 - <<'PY'
+import hashlib, hmac, os
+# The password travels through the environment, not through argv:
+# /proc/<pid>/cmdline is world-readable, /proc/<pid>/environ is not.
+user, password = os.environ["RPC_USER"], os.environ["DASH_PASS"]
+salt = os.urandom(16).hex()
+digest = hmac.new(salt.encode(), password.encode(), hashlib.sha256).hexdigest()
+print(f"rpcauth={user}:{salt}${digest}")
+PY
+        else
+            grep "^rpcauth=${RPC_USER}:" "$BITCOIN_CONF" | head -1
+        fi
+        echo "$WANTED_WHITELIST"
+        # rpcwhitelistdefault=0 means the restriction applies only to users
+        # that have a whitelist of their own. Everyone else keeps full access.
+        grep -q '^rpcwhitelistdefault=' "$BITCOIN_CONF" || echo "rpcwhitelistdefault=0"
+    } > "$BLOCK"
 
-    # rpcwhitelistdefault=0 means the restriction applies only to users that
-    # have a whitelist of their own. Everyone else keeps full access.
-    grep -q '^rpcwhitelistdefault=' "$BITCOIN_CONF" \
-        || echo "rpcwhitelistdefault=0" >> "$BITCOIN_CONF"
+    # Drop the old lines of this user, then write the fresh ones into the
+    # part of the file that belongs to no network section.
+    sed -i "/^rpcauth=${RPC_USER}:/d;/^rpcwhitelist=${RPC_USER}:/d" "$BITCOIN_CONF"
+    conf_insert "$BITCOIN_CONF" "$BLOCK" || fail "bitcoin.conf could not be written." \
+        "The file as it was is in $BACKUP"
+    rm -f "$BLOCK"
 
-    ok "account '${RPC_USER}' added, limited to $(tr ',' '\n' <<<"$METHODS" | wc -l) read-only methods"
+    ok "account '${RPC_USER}' written, limited to $(tr ',' '\n' <<<"$METHODS" | wc -l) read-only methods"
     RESTART_NEEDED=1
+else
+    ok "read-only whitelist already up to date"
 fi
 
 if [[ -z "${DASH_PASS:-}" ]]; then
@@ -372,12 +479,27 @@ ok "generator in /usr/local/bin/node-dashboard"
 # Must be allowed to read the journal, otherwise the log panel stays empty
 usermod -aG systemd-journal "$DASH_USER" 2>/dev/null || true
 
+# Read what is there BEFORE the file is touched — install(1) truncates it,
+# and conf_value would then only ever find the defaults.
+CFG_INTERVAL="$(conf_value INTERVAL 30)"
+CFG_LOG_INTERVAL="$(conf_value LOG_INTERVAL 5)"
+CFG_LOG_SERVICES="$(conf_value LOG_SERVICES bitcoind)"
+CFG_LOG_LINES="$(conf_value LOG_LINES 150)"
+CFG_RPC_TIMEOUT="$(conf_value RPC_TIMEOUT 45)"
+CFG_TOLERANCE="$(conf_value TOLERANCE 3)"
+CFG_PEERS_MAX="$(conf_value PEERS_MAX 64)"
+CFG_ELECTRS_METRICS="$(conf_value ELECTRS_METRICS 127.0.0.1:4224)"
+
+# Created with its final mode BEFORE anything is written into it: "cat >"
+# followed by chmod left the RPC password world-readable for the length of
+# two commands (2026-09-06).
+install -m 0640 -o root -g "$DASH_USER" /dev/null "$CONF"
 cat > "$CONF" <<EOF
 # Configuration of the node dashboard.
 # The password belongs to the RPC user '${RPC_USER}', which bitcoin.conf
 # restricts to read-only commands via rpcwhitelist.
 RPC_HOST=127.0.0.1
-RPC_PORT=8332
+RPC_PORT=${RPC_PORT}
 RPC_USER=${RPC_USER}
 RPC_PASSWORD=${DASH_PASS}
 OUT_DIR=${WWW}
@@ -391,23 +513,27 @@ LANGUAGE=${LANGUAGE}
 # what answers there — and says so when nothing does.
 ELECTRS_PORT=${ELECTRUM_PORT}
 
+# Prometheus endpoint of electrs; read for the index bar while it is
+# still indexing.
+ELECTRS_METRICS=${CFG_ELECTRS_METRICS}
+
 # Interval in seconds: querying the node and refreshing the log panel.
-INTERVAL=30
-LOG_INTERVAL=5
+INTERVAL=${CFG_INTERVAL}
+LOG_INTERVAL=${CFG_LOG_INTERVAL}
 
 # Log sources, comma separated. Leaving it empty switches the panel off.
-LOG_SERVICES=bitcoind
-LOG_LINES=150
+LOG_SERVICES=${CFG_LOG_SERVICES}
+LOG_LINES=${CFG_LOG_LINES}
 
 # Timeout per call. During the initial sync Bitcoin Core stalls its query
 # interface while it writes the dbcache to disk.
-RPC_TIMEOUT=45
+RPC_TIMEOUT=${CFG_RPC_TIMEOUT}
 
 # This many unsuccessful calls in a row before the node counts as down.
-TOLERANCE=3
+TOLERANCE=${CFG_TOLERANCE}
 
 # Maximum number of peers in the network map.
-PEERS_MAX=64
+PEERS_MAX=${CFG_PEERS_MAX}
 EOF
 chown "root:${DASH_USER}" "$CONF"
 chmod 640 "$CONF"
@@ -482,8 +608,10 @@ if [[ -n "$WEBSERVER" ]] && command -v nginx >/dev/null; then
     # one port without a name: nginx serves the first by file name, and
     # "default" sorts before "node-dashboard" — the welcome page would win.
     # Only the link in sites-enabled goes; the file stays in sites-available.
+    DEFAULT_SITE_REMOVED=0
     if [[ -e /etc/nginx/sites-enabled/default ]]; then
         rm -f /etc/nginx/sites-enabled/default
+        DEFAULT_SITE_REMOVED=1
         info "nginx's welcome site disabled (sites-enabled/default)"
     fi
     cat > /etc/nginx/sites-available/node-dashboard <<EOF
@@ -495,10 +623,20 @@ server {
 
     server_tokens off;
     autoindex off;
-    add_header X-Content-Type-Options nosniff;
-    add_header Referrer-Policy no-referrer;
-    add_header X-Frame-Options DENY;
-    add_header Content-Security-Policy "${CSP}";
+    # UTF-8 for text/plain as well: log.txt carries the node's own lines, and
+    # without this nginx sends them without a charset — a browser opening the
+    # file directly then reads them as latin-1.
+    charset utf-8;
+    # text/html stays in the list: naming any type at all replaces nginx's
+    # default set, and dropping text/html would take the charset off the page.
+    charset_types text/html text/plain text/css application/json application/javascript;
+    # 'always': without it nginx drops these headers on every answer that is
+    # not a normal 200 — the 404 for a dotfile and the 405 for a POST went out
+    # bare (2026-09-06).
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer always;
+    add_header X-Frame-Options DENY always;
+    add_header Content-Security-Policy "${CSP}" always;
 
     # Allow read requests only
     if (\$request_method !~ ^(GET|HEAD)\$) { return 405; }
@@ -527,6 +665,14 @@ EOF
     else
         red "nginx rejects the configuration:"
         nginx -t 2>&1 | sed 's/^/         /'
+        # Put the machine back the way it was before failing: the welcome
+        # site was already unlinked at this point, and leaving without it
+        # broke a setup that had been working (2026-09-06).
+        rm -f /etc/nginx/sites-enabled/node-dashboard
+        if (( DEFAULT_SITE_REMOVED == 1 )) && [[ -e /etc/nginx/sites-available/default ]]; then
+            ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+            info "nginx's welcome site put back"
+        fi
         fail "See above." "Usually another site already listens on port ${PORT}:" \
              "sudo bash install.sh --port 8080   moves the dashboard to another port"
     fi
@@ -544,10 +690,31 @@ elif [[ -z "$SUBNET" ]]; then
     warn "network range not detected — the firewall is left alone."
     info "sudo bash install.sh --subnet 192.168.1.0/24   (your range) sets the rule"
 else
-    ufw_delete_marked
-    ufw allow from "$SUBNET" to any port "$PORT" proto tcp comment "$UFW_MARK" >/dev/null
-    ok "port $PORT reachable from $SUBNET only"
-    info "The page is not reachable from the internet, not even with an open router."
+    # 'ufw status' prints nothing but "Status: inactive" when the firewall is
+    # off — ufw_delete_marked then finds no rule to delete and every run
+    # added another copy of the same one. 'ufw show added' lists them either
+    # way (2026-09-06).
+    UFW_ACTIVE=0
+    ufw status 2>/dev/null | grep -qi '^Status: active' && UFW_ACTIVE=1
+    if (( UFW_ACTIVE == 1 )); then
+        ufw_delete_marked
+        ufw allow from "$SUBNET" to any port "$PORT" proto tcp comment "$UFW_MARK" >/dev/null
+        ok "port $PORT reachable from $SUBNET only"
+        info "The page is not reachable from the internet, not even with an open router."
+    else
+        if ufw show added 2>/dev/null | grep -qF "comment '${UFW_MARK}'"; then
+            info "the rule is already in ufw's rule set"
+        else
+            ufw allow from "$SUBNET" to any port "$PORT" proto tcp comment "$UFW_MARK" >/dev/null
+            info "rule written for $SUBNET on port $PORT"
+        fi
+        # This used to read "port N reachable from SUBNET only" whether ufw
+        # was running or not. It is a statement about the safety of the
+        # machine, and it was false on every host with ufw installed but
+        # never enabled (2026-09-06).
+        warn "ufw is installed but NOT active — nothing is being filtered."
+        info "sudo ufw enable   turns it on (check your SSH rule first)."
+    fi
 fi
 
 # ===================================================================== Done ==
