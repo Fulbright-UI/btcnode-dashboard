@@ -340,6 +340,15 @@ fehlgeschlagener Abruf und die Tippschleife der Chronik mit angehaltener
 Uhr. `probelauf.py` ruft ihn von selbst auf, wenn `node` und jsdom da
 sind, und sagt es, wenn nicht.
 
+`tests/geometrie.py` läuft innerhalb von `probelauf.py` und prüft die
+berechnete Geometrie jeder Zeichnung der Seite: nichts außerhalb der
+eigenen viewBox, keine abgeschnittene Textzeile, keine runde Ecke in einem
+gestreckten SVG, jeder Füllbalken so voll, wie seine beiden Zahlen es
+sagen, Säulen in der Reihenfolge ihrer Werte und ohne Überlappung, und in
+der Netzkarte je Gegenstelle eine Zeile mit Punkt, Speiche und
+Beschriftung auf einer Höhe. Das Orakel ist die Zahl im `<title>` der
+Zeichnung, nicht die Formel, die sie gezeichnet hat.
+
 Rund 220 Prüfungen laufen dabei durch, in beiden Sprachen: Wohlgeformtheit des
 HTML, keine Schaltflächen, die den Node erreichen, keine Inline-Stile, der
 richtige Dezimaltrenner, Maskierung fremder Werte, das Toleranzfenster in beide

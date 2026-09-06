@@ -1423,6 +1423,18 @@ def check_hashrate(nd, cfg):
           " | ".join(str(p) for p in windows[:3]))
 
 
+def check_geometry(page, nd):
+    """Computed geometry of every SVG on the page (tests/geometrie.py).
+
+    The fourth blind spot of 2026-09-06: every design fault so far was
+    found on a screenshot, because nothing here drew anything. No image
+    diffing — the drawings carry their own numbers, and those are the
+    oracle."""
+    sys.path.insert(0, str(HERE))
+    import geometrie
+    geometrie.run(page, check, comma=(nd.LANGUAGE == "de"))
+
+
 def check_dash_js():
     """Run dash.js against the page just written, under jsdom (tests/dash-test.js).
     The script is the one language in the repo nothing executed until
@@ -1806,6 +1818,8 @@ def main():
             check_fee_tile(nd)
             check_hashrate(nd, cfg)
             check_own_node(nd)
+        check_geometry(page, nd)
+        if args.case == "synchron":
             check_dash_js()
             check_cache(nd, cfg)
     finally:

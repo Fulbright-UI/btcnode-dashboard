@@ -332,6 +332,14 @@ box, the peer map, the copy buttons, the log colouring, a failed fetch,
 and the chronicle's typing loop with a frozen clock. `probelauf.py` runs
 it by itself when `node` and jsdom are there and says so when they are not.
 
+`tests/geometrie.py` runs inside `probelauf.py` and checks the computed
+geometry of every SVG the page carries: nothing drawn outside its own
+viewBox, no text cut off at the frame, no rounded corner inside a
+stretched one, every fill bar as full as its own two numbers say, columns
+in the order of their values and never overlapping, and in the network map
+one row per peer with dot, spoke and label on the same line. The oracle is
+the number in each drawing's `<title>`, not the formula that drew it.
+
 About 220 checks run in the process, in both languages: well-formedness of the
 HTML, no buttons that reach the node, no inline styles, the correct decimal
 separator, escaping of foreign values, the tolerance window in both
